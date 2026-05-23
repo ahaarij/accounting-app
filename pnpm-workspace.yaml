@@ -1,0 +1,8 @@
+packages:
+  - 'electron'
+  - 'frontend'
+  - 'backend'
+allowBuilds:
+  '@nestjs/core': true
+  electron: true
+  esbuild: true

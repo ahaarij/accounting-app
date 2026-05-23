@@ -1,0 +1,51 @@
+import { Module, forwardRef } from '@nestjs/common';
+import { TypeOrmModule } from '@nestjs/typeorm';
+import { ReconciliationModule } from '../reconciliation/reconciliation.module';
+import { MulterModule } from '@nestjs/platform-express';
+import { ImportController } from './import.controller';
+import { ImportService } from './import.service';
+import { GroupAParser } from './parsers/group-a.parser';
+import { GroupBParser } from './parsers/group-b.parser';
+import { TransactionParser } from './parsers/transaction.parser';
+import { CashflowParser } from './parsers/cashflow.parser';
+import { Company } from '../entities/company.entity';
+import { BankAccount } from '../entities/bank-account.entity';
+import { DailyBalance } from '../entities/daily-balance.entity';
+import { AccountTransaction } from '../entities/account-transaction.entity';
+import { DailyTransaction } from '../entities/daily-transaction.entity';
+import { DailyCashflow } from '../entities/daily-cashflow.entity';
+import { CounterpartyLedger } from '../entities/counterparty-ledger.entity';
+import { ImportLog } from '../entities/import-log.entity';
+import { diskStorage } from 'multer';
+import * as path from 'path';
+import * as fs from 'fs';
+
+@Module({
+  imports: [
+    TypeOrmModule.forFeature([
+      Company,
+      BankAccount,
+      DailyBalance,
+      AccountTransaction,
+      DailyTransaction,
+      DailyCashflow,
+      CounterpartyLedger,
+      ImportLog,
+    ]),
+    forwardRef(() => ReconciliationModule),
+    MulterModule.register({
+      storage: diskStorage({
+        destination: (req, file, cb) => {
+          const dir = path.join(process.cwd(), 'uploads');
+          if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+          cb(null, dir);
+        },
+        filename: (req, file, cb) => cb(null, `${Date.now()}-${file.originalname}`),
+      }),
+    }),
+  ],
+  controllers: [ImportController],
+  providers: [ImportService, GroupAParser, GroupBParser, TransactionParser, CashflowParser],
+  exports: [ImportService],
+})
+export class ImportModule {}
