@@ -19,11 +19,19 @@ import { CashDepositsModule } from './cash-deposits/cash-deposits.module';
   imports: [
     TypeOrmModule.forRoot({
       type: 'postgres',
-      host: process.env.DB_HOST || 'localhost',
-      port: parseInt(process.env.DB_PORT || '5432'),
-      username: process.env.DB_USER || 'reconciliation',
-      password: process.env.DB_PASSWORD || 'reconciliation123',
-      database: process.env.DB_NAME || 'reconciliation',
+      // Railway injects DATABASE_URL automatically; fall back to individual vars for local dev
+      ...(process.env.DATABASE_URL
+        ? {
+            url: process.env.DATABASE_URL,
+            ssl: { rejectUnauthorized: false },
+          }
+        : {
+            host: process.env.DB_HOST || 'localhost',
+            port: parseInt(process.env.DB_PORT || '5432'),
+            username: process.env.DB_USER || 'reconciliation',
+            password: process.env.DB_PASSWORD || 'reconciliation123',
+            database: process.env.DB_NAME || 'reconciliation',
+          }),
       entities: [__dirname + '/**/*.entity{.ts,.js}'],
       migrations: [__dirname + '/database/migrations/*{.ts,.js}'],
       migrationsRun: process.env.NODE_ENV === 'production',
