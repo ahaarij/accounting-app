@@ -2,7 +2,7 @@ import { Fragment, useState, useEffect, useMemo } from 'react';
 import { Layout } from '../components/Layout';
 import {
   ChevronDown, ChevronRight, ChevronUp,
-  Plus, Pencil, Trash2, AlertTriangle, SlidersHorizontal, Calculator,
+  Plus, Pencil, Trash2, AlertTriangle, SlidersHorizontal, Calculator, Check,
 } from 'lucide-react';
 import { cn } from '../lib/utils';
 import {
@@ -144,6 +144,7 @@ function CategoryBadge({ cat }: { cat: string | null }) {
 // ── Deposit planner ────────────────────────────────────────────────────────────
 
 interface PlanAllocation {
+  company_id: number;
   company_name: string;
   bank_account: string;
   category: string | null;
@@ -183,6 +184,7 @@ function buildDepositPlan(
       const chunk = parseFloat(Math.min(slot.row.per_tx_limit, room, remaining).toFixed(2));
       if (chunk <= 0) continue;
       allocations.push({
+        company_id: slot.row.company_id,
         company_name: slot.row.company_name,
         bank_account: slot.row.bank_account!,
         category: slot.row.category,
@@ -384,10 +386,18 @@ function CompanyLimitsModal({ company, onClose, onSave }: {
 
 // ── Deposit planner modal ──────────────────────────────────────────────────────
 
-function DepositPlannerModal({ rows, onClose }: { rows: CompanyRow[]; onClose: () => void }) {
+function DepositPlannerModal({ rows, onClose, onDepositsAdded }: {
+  rows: CompanyRow[];
+  onClose: () => void;
+  onDepositsAdded: () => void;
+}) {
   const [amount, setAmount] = useState('');
+  const [description, setDescription] = useState('');
   const [plan, setPlan] = useState<PlanAllocation[] | null>(null);
   const [leftover, setLeftover] = useState(0);
+  const [added, setAdded] = useState<Set<number>>(new Set());
+  const [saving, setSaving] = useState<Set<number>>(new Set());
+  const [addingAll, setAddingAll] = useState(false);
 
   function calculate() {
     const n = parseFloat(amount.replace(/,/g, ''));
@@ -395,41 +405,95 @@ function DepositPlannerModal({ rows, onClose }: { rows: CompanyRow[]; onClose: (
     const result = buildDepositPlan(n, rows);
     setPlan(result.allocations);
     setLeftover(result.leftover);
+    setAdded(new Set());
+  }
+
+  async function addOne(i: number, alloc: PlanAllocation) {
+    setSaving((prev) => new Set(prev).add(i));
+    try {
+      await createCashDeposit({
+        company_id: alloc.company_id,
+        bank_account: alloc.bank_account,
+        date: todayStr(),
+        description: description.trim() || 'Large deposit',
+        amount: alloc.amount,
+      });
+      setAdded((prev) => new Set(prev).add(i));
+      onDepositsAdded();
+    } finally {
+      setSaving((prev) => { const s = new Set(prev); s.delete(i); return s; });
+    }
+  }
+
+  async function addAll() {
+    if (!plan) return;
+    setAddingAll(true);
+    try {
+      for (let i = 0; i < plan.length; i++) {
+        if (added.has(i)) continue;
+        await createCashDeposit({
+          company_id: plan[i].company_id,
+          bank_account: plan[i].bank_account,
+          date: todayStr(),
+          description: description.trim() || 'Large deposit',
+          amount: plan[i].amount,
+        });
+        setAdded((prev) => new Set(prev).add(i));
+        onDepositsAdded();
+      }
+    } finally {
+      setAddingAll(false);
+    }
   }
 
   const allocatedTotal = plan ? plan.reduce((s, a) => s + a.amount, 0) : 0;
-  const uniqueAccounts = plan ? new Set(plan.map((a) => `${a.company_name}::${a.bank_account}`)).size : 0;
+  const uniqueAccounts = plan ? new Set(plan.map((a) => `${a.company_id}::${a.bank_account}`)).size : 0;
+  const allAdded = plan !== null && plan.length > 0 && added.size === plan.length;
 
   return (
     <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
-      <div className="bg-white rounded-xl shadow-xl w-[700px] max-h-[82vh] flex flex-col">
+      <div className="bg-white rounded-xl shadow-xl w-[700px] max-h-[85vh] flex flex-col">
         <div className="px-6 pt-6 pb-4 border-b border-gray-100">
-          <h2 className="text-base font-semibold text-gray-900">Deposit Planner</h2>
+          <h2 className="text-base font-semibold text-gray-900">Large Deposit Planner</h2>
           <p className="text-xs text-gray-400 mt-0.5">
             Splits an amount across accounts — Category C first, then least-used accounts
           </p>
         </div>
 
-        <div className="px-6 py-4 flex items-end gap-3 border-b border-gray-100">
-          <div className="flex-1">
-            <label className="block text-xs font-medium text-gray-700 mb-1">Total Amount to Deposit (AED)</label>
-            <input
-              type="number"
-              value={amount}
-              onChange={(e) => { setAmount(e.target.value); setPlan(null); }}
-              onKeyDown={(e) => e.key === 'Enter' && calculate()}
-              placeholder="e.g. 2000000"
-              min="1"
-              autoFocus
-              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-            />
+        <div className="px-6 py-4 border-b border-gray-100 space-y-3">
+          <div className="flex items-end gap-3">
+            <div className="flex-1">
+              <label className="block text-xs font-medium text-gray-700 mb-1">Total Amount to Deposit (AED)</label>
+              <input
+                type="number"
+                value={amount}
+                onChange={(e) => { setAmount(e.target.value); setPlan(null); setAdded(new Set()); }}
+                onKeyDown={(e) => e.key === 'Enter' && calculate()}
+                placeholder="e.g. 2000000"
+                min="1"
+                autoFocus
+                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+              />
+            </div>
+            <button
+              onClick={calculate}
+              className="px-4 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700"
+            >
+              Find Split
+            </button>
           </div>
-          <button
-            onClick={calculate}
-            className="px-4 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700"
-          >
-            Find Split
-          </button>
+          {plan && plan.length > 0 && (
+            <div>
+              <label className="block text-xs font-medium text-gray-700 mb-1">Description (applied to all)</label>
+              <input
+                type="text"
+                value={description}
+                onChange={(e) => setDescription(e.target.value)}
+                placeholder="e.g. Cash deposit Jun 2026"
+                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+              />
+            </div>
+          )}
         </div>
 
         <div className="overflow-y-auto flex-1">
@@ -447,27 +511,48 @@ function DepositPlannerModal({ rows, onClose }: { rows: CompanyRow[]; onClose: (
                   <th className="px-4 py-2.5 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">Account</th>
                   <th className="px-4 py-2.5 text-right text-xs font-semibold text-gray-500 uppercase tracking-wide">Deposit (AED)</th>
                   <th className="px-4 py-2.5 text-right text-xs font-semibold text-gray-500 uppercase tracking-wide">Remaining After</th>
+                  <th className="w-20 px-4 py-2.5" />
                 </tr>
               </thead>
               <tbody>
-                {plan.map((a, i) => (
-                  <tr key={i} className="border-b border-gray-100 last:border-0 hover:bg-gray-50/60">
-                    <td className="px-4 py-2.5 text-xs text-gray-400 tabular-nums">{i + 1}</td>
-                    <td className="px-4 py-2.5"><CategoryBadge cat={a.category} /></td>
-                    <td className="px-4 py-2.5 text-gray-800 font-medium text-xs">{a.company_name}</td>
-                    <td className="px-4 py-2.5 text-gray-500 text-xs">{a.bank_account}</td>
-                    <td className="px-4 py-2.5 text-right text-xs font-semibold text-gray-800 tabular-nums">{fmt(a.amount)}</td>
-                    <td className="px-4 py-2.5 text-right text-xs tabular-nums text-gray-400">{fmt(a.remaining_after)}</td>
-                  </tr>
-                ))}
+                {plan.map((a, i) => {
+                  const isAdded = added.has(i);
+                  const isSaving = saving.has(i);
+                  return (
+                    <tr key={i} className={cn('border-b border-gray-100 last:border-0', isAdded ? 'bg-green-50' : 'hover:bg-gray-50/60')}>
+                      <td className="px-4 py-2.5 text-xs text-gray-400 tabular-nums">{i + 1}</td>
+                      <td className="px-4 py-2.5"><CategoryBadge cat={a.category} /></td>
+                      <td className="px-4 py-2.5 text-gray-800 font-medium text-xs">{a.company_name}</td>
+                      <td className="px-4 py-2.5 text-gray-500 text-xs">{a.bank_account}</td>
+                      <td className="px-4 py-2.5 text-right text-xs font-semibold text-gray-800 tabular-nums">{fmt(a.amount)}</td>
+                      <td className="px-4 py-2.5 text-right text-xs tabular-nums text-gray-400">{fmt(a.remaining_after)}</td>
+                      <td className="px-4 py-2.5 text-right">
+                        {isAdded ? (
+                          <span className="flex items-center justify-end gap-1 text-xs text-green-600 font-medium">
+                            <Check size={12} /> Added
+                          </span>
+                        ) : (
+                          <button
+                            onClick={() => addOne(i, a)}
+                            disabled={isSaving || addingAll}
+                            className="flex items-center gap-1 px-2 py-1 text-xs bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50 ml-auto"
+                          >
+                            <Plus size={11} />{isSaving ? '…' : 'Add'}
+                          </button>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
               <tfoot className="bg-gray-50 border-t border-gray-200">
                 <tr>
                   <td colSpan={4} className="px-4 py-2.5 text-xs text-gray-500">
                     {plan.length} transaction{plan.length !== 1 ? 's' : ''} across {uniqueAccounts} account{uniqueAccounts !== 1 ? 's' : ''}
+                    {added.size > 0 && <span className="ml-2 text-green-600">· {added.size} added</span>}
                   </td>
                   <td className="px-4 py-2.5 text-right text-xs font-bold text-blue-700 tabular-nums">{fmt(allocatedTotal)}</td>
-                  <td />
+                  <td colSpan={2} />
                 </tr>
               </tfoot>
             </table>
@@ -475,14 +560,28 @@ function DepositPlannerModal({ rows, onClose }: { rows: CompanyRow[]; onClose: (
           {leftover > 0.01 && (
             <div className="mx-4 my-3 flex items-center gap-2 px-3 py-2.5 bg-amber-50 border border-amber-200 rounded-lg text-xs text-amber-700">
               <AlertTriangle size={13} />
-              <span>
-                Cannot allocate <strong>AED {fmt(leftover)}</strong> — insufficient monthly capacity across all accounts
-              </span>
+              <span>Cannot allocate <strong>AED {fmt(leftover)}</strong> — insufficient monthly capacity across all accounts</span>
             </div>
           )}
         </div>
 
-        <div className="px-6 py-4 border-t border-gray-100 flex justify-end">
+        <div className="px-6 py-4 border-t border-gray-100 flex items-center justify-between">
+          <div>
+            {plan && plan.length > 0 && !allAdded && (
+              <button
+                onClick={addAll}
+                disabled={addingAll}
+                className="px-4 py-2 text-sm bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:opacity-50"
+              >
+                {addingAll ? 'Adding…' : 'Add All'}
+              </button>
+            )}
+            {allAdded && (
+              <span className="flex items-center gap-1.5 text-sm text-green-600 font-medium">
+                <Check size={14} /> All deposits added
+              </span>
+            )}
+          </div>
           <button onClick={onClose} className="px-4 py-2 text-sm text-gray-600 border border-gray-300 rounded-lg hover:bg-gray-50">
             Close
           </button>
@@ -832,7 +931,7 @@ export default function CashDepositsTracker() {
               className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium border border-blue-200 text-blue-700 bg-blue-50 rounded-lg hover:bg-blue-100 transition-colors"
             >
               <Calculator size={13} />
-              Plan Deposit
+              Large Deposit
             </button>
           <div className="flex bg-gray-100 rounded-lg p-0.5 gap-0.5">
             {VIEW_TABS.map(({ mode, label }) => (
@@ -1058,7 +1157,11 @@ export default function CashDepositsTracker() {
 
       {/* Deposit planner modal */}
       {showPlanner && (
-        <DepositPlannerModal rows={rows} onClose={() => setShowPlanner(false)} />
+        <DepositPlannerModal
+          rows={rows}
+          onClose={() => setShowPlanner(false)}
+          onDepositsAdded={load}
+        />
       )}
     </Layout>
   );
