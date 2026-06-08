@@ -3,6 +3,7 @@
   "version": "1.0.0",
   "scripts": {
     "start": "node_modules/.bin/ts-node -r tsconfig-paths/register src/main.ts",
+    "start:prod": "node dist/main.js",
     "start:dev": "node_modules/.bin/ts-node-dev -r tsconfig-paths/register --respawn --transpile-only src/main.ts",
     "build": "node_modules/.bin/tsc -p tsconfig.json",
     "typeorm": "node_modules/.bin/tsx ./node_modules/typeorm/cli.js",

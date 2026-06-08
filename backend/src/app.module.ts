@@ -26,7 +26,7 @@ import { CashDepositsModule } from './cash-deposits/cash-deposits.module';
       database: process.env.DB_NAME || 'reconciliation',
       entities: [__dirname + '/**/*.entity{.ts,.js}'],
       migrations: [__dirname + '/database/migrations/*{.ts,.js}'],
-      migrationsRun: false,
+      migrationsRun: true,
       synchronize: false,
       logging: false,
     }),
