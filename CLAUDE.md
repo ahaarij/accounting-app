@@ -10,7 +10,11 @@ Financial management platform for a UAE-based multi-company trading group. Origi
 
 **Planned new modules:** multi-company profiles (10+), product lists with daily prices, invoice system (VAT / offshore / third-port shipment), buyer/supplier registry, Bill of Lading management.
 
-**Deployment target:** AWS — ECS (NestJS), RDS (PostgreSQL), S3 (files/PDFs), CloudFront (React frontend). Electron to be replaced by PWA or plain web app.
+**Deployment target:** Vercel (frontend) + Railway (NestJS + PostgreSQL). Electron replaced by PWA.
+
+**Live URLs:**
+- Frontend: https://accounting-app-frontend-mu.vercel.app
+- Backend: https://backend-production-db77.up.railway.app
 
 ---
 

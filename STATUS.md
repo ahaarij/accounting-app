@@ -1,9 +1,15 @@
 # Session Handoff — Reconciliation App
-_Last updated: 2026-06-08_
+_Last updated: 2026-06-08 (session 2)_
 
 ---
 
-## How to run
+## URLs
+| Service | URL |
+|---|---|
+| Frontend (Vercel) | https://accounting-app-frontend-mu.vercel.app |
+| Backend (Railway) | https://backend-production-db77.up.railway.app |
+
+## How to run locally
 ```bash
 docker compose up -d
 cd backend && pnpm run start:dev    # :3000
@@ -17,71 +23,82 @@ cd frontend && pnpm run dev         # :3001
 
 ---
 
-## What was done (2026-06-08 session)
+## 🚨 BLOCKING — Must fix next session
 
-### 1. Role-based auth overhaul
-- **4 roles**: `super_admin` (one, seeded), `admin`, `developer`, `user`
-- **Registration flow**: new signups get `status='pending'` — cannot log in until approved
-- **Login** returns specific errors: "pending approval" vs "declined"
-- **Super admin** seeded: `superadmin@recon.ae` / `SuperAdmin123!`
-- **User Management page** — two tabs: Pending Requests (approve/reject) + Active Users (role change, delete)
-- **Register page** at `/register` — on success shows pending message, no token issued
-- Route guards updated: `user` role → Dashboard + Companies + Cash Tracker only; `admin`/`developer`/`super_admin` → full access; `/users` → `admin`+ only
-- Migration applied manually via `docker exec psql` (tsx transpiler lacks `emitDecoratorMetadata`, breaks TypeORM migration CLI)
-- `users` table: `status VARCHAR(20)` column added; role check constraint updated to allow new roles
+### 1. Git remote not set up — code not reaching GitHub
+All local commits (fixes, PWA, Dockerfile, etc.) are NOT pushed to GitHub yet.
+No remote is configured: `git remote -v` returns empty.
 
-### 2. Cash Deposits Tracker (4 view modes)
-- Added **By Bank** and **By Owner** grouping views alongside existing Category and Company views
-- Company separator bars (3px slate divider) between different companies in Category view
-- Fixed stale-rows bug when switching views: `key={viewMode}` on wrapper div forces full remount
+**Fix:**
+```bash
+# 1. Create repo on github.com (Private, no README)
+cd "/Users/mac/Desktop/Reconcillation app"
+git remote add origin https://github.com/YOUR_USERNAME/YOUR_REPO.git
+git push -u origin main
+```
 
-### 3. Slash-name company cleanup
-- Deleted the 10 "old name" companies from slash-pairs (e.g. "HEDGES TOURISM" removed, "BLACK PEPPER TOURISM LLC" kept)
-- DB now has 52 companies (was 62)
-- Seed migration `1000000000006` updated to only insert right-side names going forward
+### 2. Vercel showing 404 for all users
+React SPA routing — direct URL hits return 404 because Vercel doesn't know to serve index.html.
+`frontend/vercel.json` already created with the fix but NOT pushed yet (blocked by issue 1).
+
+### 3. Frontend hitting wrong API URL
+`frontend/.env.production` created with `VITE_API_URL=https://backend-production-db77.up.railway.app`
+NOT pushed yet (blocked by issue 1).
+
+### 4. Railway migration 008 constraint bug
+Migration `1000000000008-RolesAndStatus.ts` fixed (drops old role constraint before inserting super_admin).
+NOT pushed yet (blocked by issue 1).
+
+### 5. Railway backend not connected to local code
+Railway needs to be pointed at the GitHub repo after push.
+Railway backend service → Settings → Source → connect GitHub repo → branch main.
 
 ---
 
-## Current DB state
-```
-users table:
-  id=1  admin@recon.ae      admin       active
-  id=4  acct@acct.com       admin       active
-  id=5  view@view.com       user        active
-  id=6  superadmin@recon.ae super_admin active
-```
+## Once push is done — verify these
+- [ ] `curl https://backend-production-db77.up.railway.app/health` returns `{"status":"ok"}`
+- [ ] https://accounting-app-frontend-mu.vercel.app loads login page (not 404)
+- [ ] Login with superadmin@recon.ae / SuperAdmin123! succeeds
+- [ ] Railway logs show all 9 migrations applied cleanly
 
 ---
 
-## What still needs doing
+## What was completed this session
 
-### Immediate (verified 2026-06-08)
-- [x] `cd frontend && pnpm run build` — zero TS errors (fixed Breadcrumb, accountant role, isViewer refs)
-- [x] `cd backend && pnpm run start:dev` — compiles and connects clean
-- [x] Auth flow: register → pending → approve → login all confirmed working
-- [x] Backend role guards updated — replaced stale `accountant` role with correct `super_admin/admin/developer` across all 7 controllers
+### Auth & permissions (fully working locally)
+- 4 roles: `super_admin`, `admin`, `developer`, `user`
+- Registration → pending → approve flow
+- All 7 backend controllers fixed (removed stale `accountant` role → `super_admin/admin/developer`)
+- Frontend TS build: zero errors
 
-### Next features
+### PWA
+- `vite-plugin-pwa` installed and configured
+- Service worker precaches static assets, never caches API calls
+- Icons: `frontend/public/icon-192.svg`, `icon-512.svg`, `icon-maskable.svg`
+- Manifest: name="Reconciliation App", short_name="Recon", theme=#0f172a
+
+### Deployment setup
+- `Dockerfile` at repo root (Railway uses this — fixed pnpm not found error)
+- `.dockerignore` excludes frontend/electron/node_modules
+- `app.module.ts` uses `DATABASE_URL` (Railway auto-injects) with SSL + fallback to individual vars locally
+- `migrationsRun: true` in production only (`NODE_ENV=production`)
+- `frontend/.env.production` — hardcoded Railway URL
+- `frontend/vercel.json` — SPA rewrite rules
+- `v1.0` version tag in sidebar
+
+### Railway env vars needed (set in backend service Variables tab)
+| Variable | Value |
+|---|---|
+| `DB_HOST` | from PostgreSQL service PGHOST |
+| `DB_PORT` | from PGPORT |
+| `DB_USER` | from PGUSER |
+| `DB_PASSWORD` | from PGPASSWORD |
+| `DB_NAME` | from PGDATABASE |
+| `NODE_ENV` | `production` |
+| `JWT_SECRET` | any random hex string |
+
+---
+
+## Next features (after deployment fixed)
 - [ ] Invoice system (VAT / offshore / third-port)
 - [ ] Product lists with daily pricing per company
-- [ ] AWS deployment: ECS + RDS + S3 + CloudFront
-
----
-
-## Key files changed this session
-| File | Change |
-|---|---|
-| `backend/src/entities/user.entity.ts` | Added `status` column, updated role type to 4 new roles |
-| `backend/src/auth/auth.service.ts` | `register()` returns message not token; `login()` checks status |
-| `backend/src/auth/auth.controller.ts` | Removed `role` from RegisterDto |
-| `backend/src/users/users.service.ts` | `findPending()`, `approveUser()`, `rejectUser()`, `updateRole()` with super_admin protection |
-| `backend/src/users/users.controller.ts` | New `/pending`, `/approve`, `/reject` endpoints |
-| `backend/src/database/migrations/1000000000006-SeedCompanyProfiles.ts` | Slash-name entries use right-side names only |
-| `frontend/src/auth/AuthContext.tsx` | `isSuperAdmin`, `isAdmin`, `canEdit` derived from new roles |
-| `frontend/src/auth/PrivateRoute.tsx` | Accepts `UserRole[]` roles prop |
-| `frontend/src/pages/Register.tsx` | New page — pending approval flow |
-| `frontend/src/pages/Login.tsx` | Pending/declined error messages; link to /register |
-| `frontend/src/pages/UserManagement.tsx` | Two-tab UI: Pending Requests + Active Users |
-| `frontend/src/pages/CashDepositsTracker.tsx` | 4 view modes + separator bars + stale-rows fix |
-| `frontend/src/App.tsx` | Route guards by role; /register public route |
-| `frontend/src/components/Layout.tsx` | Role-based sidebar visibility + role badge |
