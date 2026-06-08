@@ -5,12 +5,15 @@ import { CompanyCashDeposit } from '../entities/company-cash-deposit.entity';
 import { CompanyDepositLimit } from '../entities/company-deposit-limit.entity';
 import { CompanyProfile } from '../entities/company-profile.entity';
 
-const DEFAULT_PER_TX = 250000;
-const DEFAULT_MONTHLY = 500000;
+function getDefaultLimits(category: string | null): { per_tx_limit: number; monthly_limit: number } {
+  if (category === 'C') return { per_tx_limit: 250000, monthly_limit: 750000 };
+  if (category === 'B') return { per_tx_limit: 250000, monthly_limit: 500000 };
+  return { per_tx_limit: 250000, monthly_limit: 250000 }; // A and null
+}
 
 function parseAccounts(csv: string | null): string[] {
   if (!csv || !csv.trim()) return [];
-  return csv.split(',').map((a) => a.trim()).filter((a) => a.length > 0);
+  return csv.split(',').map((a) => a.trim()).filter((a) => a.length > 0 && !/^WIO/i.test(a));
 }
 
 function rowKey(companyId: number, bankAccount: string | null): string {
@@ -64,8 +67,9 @@ export class CashDepositsService {
         const k = rowKey(company.id, account);
         const accountDeposits = depositsByKey.get(k) || [];
         const lim = limitsByKey.get(k);
-        const per_tx_limit = lim ? parseFloat(lim.per_tx_limit as any) : DEFAULT_PER_TX;
-        const monthly_limit = lim ? parseFloat(lim.monthly_limit as any) : DEFAULT_MONTHLY;
+        const defaults = getDefaultLimits(company.category);
+        const per_tx_limit = lim ? parseFloat(lim.per_tx_limit as any) : defaults.per_tx_limit;
+        const monthly_limit = lim ? parseFloat(lim.monthly_limit as any) : defaults.monthly_limit;
 
         let running = 0;
         const depositsOut = accountDeposits.map((d) => {
@@ -132,15 +136,26 @@ export class CashDepositsService {
 
   async updateCompanyLimits(
     companyId: number,
-    bankAccount: string,
+    _bankAccount: string,
     dto: { per_tx_limit?: number; monthly_limit?: number },
   ) {
-    let lim = await this.limitRepo.findOne({ where: { company_id: companyId, bank_account: bankAccount } });
-    if (!lim) {
-      lim = this.limitRepo.create({ company_id: companyId, bank_account: bankAccount, per_tx_limit: DEFAULT_PER_TX, monthly_limit: DEFAULT_MONTHLY });
+    const company = await this.companyRepo.findOne({ where: { id: companyId } });
+    if (!company) throw new NotFoundException(`Company ${companyId} not found`);
+
+    const accounts = parseAccounts(company.company_active_accounts);
+    const accountsToUpdate = accounts.length > 0 ? accounts : [_bankAccount];
+    const defaults = getDefaultLimits(company.category);
+
+    for (const account of accountsToUpdate) {
+      let lim = await this.limitRepo.findOne({ where: { company_id: companyId, bank_account: account } });
+      if (!lim) {
+        lim = this.limitRepo.create({ company_id: companyId, bank_account: account, per_tx_limit: defaults.per_tx_limit, monthly_limit: defaults.monthly_limit });
+      }
+      if (dto.per_tx_limit !== undefined) lim.per_tx_limit = dto.per_tx_limit;
+      if (dto.monthly_limit !== undefined) lim.monthly_limit = dto.monthly_limit;
+      await this.limitRepo.save(lim);
     }
-    if (dto.per_tx_limit !== undefined) lim.per_tx_limit = dto.per_tx_limit;
-    if (dto.monthly_limit !== undefined) lim.monthly_limit = dto.monthly_limit;
-    return this.limitRepo.save(lim);
+
+    return { success: true };
   }
 }

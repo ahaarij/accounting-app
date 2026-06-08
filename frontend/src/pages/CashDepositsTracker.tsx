@@ -281,9 +281,7 @@ function CompanyLimitsModal({ company, onClose, onSave }: {
         <h2 className="text-base font-semibold text-gray-900 mb-0.5">Deposit Limits</h2>
         <div className="mb-5">
           <p className="text-xs text-gray-500 font-medium">{company.company_name}</p>
-          {company.bank_account && (
-            <p className="text-xs text-gray-400 mt-0.5">{company.bank_account}</p>
-          )}
+          <p className="text-xs text-gray-400 mt-0.5">Applies to all accounts for this company</p>
         </div>
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>
