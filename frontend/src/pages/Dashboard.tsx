@@ -4,16 +4,9 @@ import { Layout, PageHeader } from '../components/Layout';
 import { Card, CardHeader, CardBody } from '../components/ui/card';
 import { Badge } from '../components/ui/badge';
 import { getSummary, getFlags, getBankAccounts, getNetPosition } from '../api';
-import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from 'recharts';
+import { LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from 'recharts';
 import { AlertTriangle, CheckCircle, XCircle, ChevronRight, Landmark, Building2 } from 'lucide-react';
-import {
-  Chart as ChartJS, CategoryScale, LinearScale, BarElement,
-  Tooltip as CJTooltip, Legend as CJLegend,
-} from 'chart.js';
-import { Bar } from 'react-chartjs-2';
 import { fetchCashDeposits } from '../api/cashDeposits';
-
-ChartJS.register(CategoryScale, LinearScale, BarElement, CJTooltip, CJLegend);
 
 const FLAG_DESTINATIONS: Record<string, string> = {
   missing_invoice: '/cash-ledger',
@@ -336,42 +329,18 @@ export default function Dashboard() {
                 No cash deposits recorded for this month
               </div>
             ) : (
-              <div style={{ height: 200 }}>
-                <Bar
-                  data={{
-                    labels: depositChartData.labels,
-                    datasets: [{
-                      label: 'AED Deposited',
-                      data: depositChartData.data,
-                      backgroundColor: 'rgba(16, 185, 129, 0.7)',
-                      borderColor: 'rgba(5, 150, 105, 1)',
-                      borderWidth: 1,
-                      borderRadius: 3,
-                    }],
-                  }}
-                  options={{
-                    responsive: true,
-                    maintainAspectRatio: false,
-                    plugins: {
-                      legend: { display: false },
-                      tooltip: {
-                        callbacks: {
-                          label: (ctx) => `AED ${Number(ctx.raw).toLocaleString('en-AE', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`,
-                        },
-                      },
-                    },
-                    scales: {
-                      x: { grid: { display: false }, ticks: { font: { size: 10 } } },
-                      y: {
-                        ticks: {
-                          font: { size: 10 },
-                          callback: (v) => Number(v) >= 1_000_000 ? `${(Number(v) / 1_000_000).toFixed(1)}M` : Number(v) >= 1_000 ? `${Math.round(Number(v) / 1_000)}K` : String(v),
-                        },
-                      },
-                    },
-                  }}
-                />
-              </div>
+              <ResponsiveContainer width="100%" height={200}>
+                <BarChart
+                  data={depositChartData.labels.map((label, i) => ({ day: label, AED: depositChartData!.data[i] }))}
+                  margin={{ top: 4, right: 16, left: 0, bottom: 0 }}
+                >
+                  <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+                  <XAxis dataKey="day" tick={{ fontSize: 11 }} />
+                  <YAxis tick={{ fontSize: 11 }} tickFormatter={v => v >= 1_000_000 ? `${(v / 1_000_000).toFixed(1)}M` : v >= 1_000 ? `${Math.round(v / 1_000)}K` : String(v)} width={60} />
+                  <Tooltip formatter={(v) => [`AED ${Number(v).toLocaleString('en-AE', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`, 'Deposited']} />
+                  <Bar dataKey="AED" fill="#059669" radius={[3, 3, 0, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
             )}
           </CardBody>
         </Card>
