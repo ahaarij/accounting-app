@@ -2,7 +2,7 @@ import { Fragment, useState, useEffect, useMemo } from 'react';
 import { Layout } from '../components/Layout';
 import {
   ChevronDown, ChevronRight, ChevronUp,
-  Plus, Pencil, Trash2, AlertTriangle, SlidersHorizontal,
+  Plus, Pencil, Trash2, AlertTriangle, SlidersHorizontal, Calculator,
 } from 'lucide-react';
 import { cn } from '../lib/utils';
 import {
@@ -128,6 +128,74 @@ function fmtK(n: number): string {
 function todayStr(): string {
   const now = new Date();
   return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+}
+
+function CategoryBadge({ cat }: { cat: string | null }) {
+  if (!cat) return <span className="text-gray-400 text-xs">—</span>;
+  return (
+    <span className={cn('px-2 py-0.5 text-xs font-semibold rounded',
+      cat === 'A' ? 'bg-amber-100 text-amber-700' :
+      cat === 'B' ? 'bg-sky-100 text-sky-700' : 'bg-slate-100 text-slate-700')}>
+      {cat}
+    </span>
+  );
+}
+
+// ── Deposit planner ────────────────────────────────────────────────────────────
+
+interface PlanAllocation {
+  company_name: string;
+  bank_account: string;
+  category: string | null;
+  amount: number;
+  remaining_after: number;
+}
+
+function buildDepositPlan(
+  total: number,
+  rows: CompanyRow[],
+): { allocations: PlanAllocation[]; leftover: number } {
+  const CAT_ORDER: Record<string, number> = { C: 0, B: 1, A: 2 };
+
+  type Slot = { row: CompanyRow; available: number; used: number };
+
+  const slots: Slot[] = rows
+    .filter((r) => r.bank_account !== null && r.monthly_limit - r.total_deposits > 0.01)
+    .map((r) => ({ row: r, available: r.monthly_limit - r.total_deposits, used: 0 }))
+    .sort((a, b) => {
+      const aO = CAT_ORDER[a.row.category ?? ''] ?? 3;
+      const bO = CAT_ORDER[b.row.category ?? ''] ?? 3;
+      if (aO !== bO) return aO - bO;
+      return a.row.total_deposits - b.row.total_deposits; // least used first
+    });
+
+  const allocations: PlanAllocation[] = [];
+  let remaining = total;
+  let progress = true;
+
+  // Round-robin: one per_tx_limit chunk per slot per pass
+  while (remaining > 0.01 && progress) {
+    progress = false;
+    for (const slot of slots) {
+      if (remaining <= 0.01) break;
+      const room = parseFloat((slot.available - slot.used).toFixed(2));
+      if (room <= 0.01) continue;
+      const chunk = parseFloat(Math.min(slot.row.per_tx_limit, room, remaining).toFixed(2));
+      if (chunk <= 0) continue;
+      allocations.push({
+        company_name: slot.row.company_name,
+        bank_account: slot.row.bank_account!,
+        category: slot.row.category,
+        amount: chunk,
+        remaining_after: parseFloat((room - chunk).toFixed(2)),
+      });
+      slot.used = parseFloat((slot.used + chunk).toFixed(2));
+      remaining = parseFloat((remaining - chunk).toFixed(2));
+      progress = true;
+    }
+  }
+
+  return { allocations, leftover: remaining > 0.01 ? remaining : 0 };
 }
 
 function byName<T extends { total_deposits: number }>(
@@ -314,6 +382,116 @@ function CompanyLimitsModal({ company, onClose, onSave }: {
   );
 }
 
+// ── Deposit planner modal ──────────────────────────────────────────────────────
+
+function DepositPlannerModal({ rows, onClose }: { rows: CompanyRow[]; onClose: () => void }) {
+  const [amount, setAmount] = useState('');
+  const [plan, setPlan] = useState<PlanAllocation[] | null>(null);
+  const [leftover, setLeftover] = useState(0);
+
+  function calculate() {
+    const n = parseFloat(amount.replace(/,/g, ''));
+    if (!n || n <= 0) return;
+    const result = buildDepositPlan(n, rows);
+    setPlan(result.allocations);
+    setLeftover(result.leftover);
+  }
+
+  const allocatedTotal = plan ? plan.reduce((s, a) => s + a.amount, 0) : 0;
+  const uniqueAccounts = plan ? new Set(plan.map((a) => `${a.company_name}::${a.bank_account}`)).size : 0;
+
+  return (
+    <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
+      <div className="bg-white rounded-xl shadow-xl w-[700px] max-h-[82vh] flex flex-col">
+        <div className="px-6 pt-6 pb-4 border-b border-gray-100">
+          <h2 className="text-base font-semibold text-gray-900">Deposit Planner</h2>
+          <p className="text-xs text-gray-400 mt-0.5">
+            Splits an amount across accounts — Category C first, then least-used accounts
+          </p>
+        </div>
+
+        <div className="px-6 py-4 flex items-end gap-3 border-b border-gray-100">
+          <div className="flex-1">
+            <label className="block text-xs font-medium text-gray-700 mb-1">Total Amount to Deposit (AED)</label>
+            <input
+              type="number"
+              value={amount}
+              onChange={(e) => { setAmount(e.target.value); setPlan(null); }}
+              onKeyDown={(e) => e.key === 'Enter' && calculate()}
+              placeholder="e.g. 2000000"
+              min="1"
+              autoFocus
+              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+            />
+          </div>
+          <button
+            onClick={calculate}
+            className="px-4 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700"
+          >
+            Find Split
+          </button>
+        </div>
+
+        <div className="overflow-y-auto flex-1">
+          {plan === null ? (
+            <div className="py-16 text-center text-sm text-gray-400">Enter an amount and click Find Split</div>
+          ) : plan.length === 0 ? (
+            <div className="py-16 text-center text-sm text-gray-400">No accounts have remaining capacity this month</div>
+          ) : (
+            <table className="w-full text-sm">
+              <thead className="bg-gray-50 border-b border-gray-200 sticky top-0">
+                <tr>
+                  <th className="px-4 py-2.5 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide w-8">#</th>
+                  <th className="px-4 py-2.5 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide w-12">Cat</th>
+                  <th className="px-4 py-2.5 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">Company</th>
+                  <th className="px-4 py-2.5 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">Account</th>
+                  <th className="px-4 py-2.5 text-right text-xs font-semibold text-gray-500 uppercase tracking-wide">Deposit (AED)</th>
+                  <th className="px-4 py-2.5 text-right text-xs font-semibold text-gray-500 uppercase tracking-wide">Remaining After</th>
+                </tr>
+              </thead>
+              <tbody>
+                {plan.map((a, i) => (
+                  <tr key={i} className="border-b border-gray-100 last:border-0 hover:bg-gray-50/60">
+                    <td className="px-4 py-2.5 text-xs text-gray-400 tabular-nums">{i + 1}</td>
+                    <td className="px-4 py-2.5"><CategoryBadge cat={a.category} /></td>
+                    <td className="px-4 py-2.5 text-gray-800 font-medium text-xs">{a.company_name}</td>
+                    <td className="px-4 py-2.5 text-gray-500 text-xs">{a.bank_account}</td>
+                    <td className="px-4 py-2.5 text-right text-xs font-semibold text-gray-800 tabular-nums">{fmt(a.amount)}</td>
+                    <td className="px-4 py-2.5 text-right text-xs tabular-nums text-gray-400">{fmt(a.remaining_after)}</td>
+                  </tr>
+                ))}
+              </tbody>
+              <tfoot className="bg-gray-50 border-t border-gray-200">
+                <tr>
+                  <td colSpan={4} className="px-4 py-2.5 text-xs text-gray-500">
+                    {plan.length} transaction{plan.length !== 1 ? 's' : ''} across {uniqueAccounts} account{uniqueAccounts !== 1 ? 's' : ''}
+                  </td>
+                  <td className="px-4 py-2.5 text-right text-xs font-bold text-blue-700 tabular-nums">{fmt(allocatedTotal)}</td>
+                  <td />
+                </tr>
+              </tfoot>
+            </table>
+          )}
+          {leftover > 0.01 && (
+            <div className="mx-4 my-3 flex items-center gap-2 px-3 py-2.5 bg-amber-50 border border-amber-200 rounded-lg text-xs text-amber-700">
+              <AlertTriangle size={13} />
+              <span>
+                Cannot allocate <strong>AED {fmt(leftover)}</strong> — insufficient monthly capacity across all accounts
+              </span>
+            </div>
+          )}
+        </div>
+
+        <div className="px-6 py-4 border-t border-gray-100 flex justify-end">
+          <button onClick={onClose} className="px-4 py-2 text-sm text-gray-600 border border-gray-300 rounded-lg hover:bg-gray-50">
+            Close
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ── Grouped table header ───────────────────────────────────────────────────────
 
 function GroupedTableHead({ firstColLabel, canEdit }: { firstColLabel: string; canEdit: boolean }) {
@@ -357,6 +535,7 @@ export default function CashDepositsTracker() {
 
   const [depositModal, setDepositModal] = useState<{ company: CompanyRow; deposit: Deposit | null } | null>(null);
   const [limitsModal, setLimitsModal] = useState<CompanyRow | null>(null);
+  const [showPlanner, setShowPlanner] = useState(false);
 
   const { from: effectiveFrom, to: effectiveTo } = useMemo(
     () => getEffectiveDates(dateMode, fromDate, toDate),
@@ -431,16 +610,7 @@ export default function CashDepositsTracker() {
   const categoryColSpan = canEdit ? 7 : 6;
   const groupedColSpan  = canEdit ? 5 : 4;
 
-  function categoryBadge(cat: string | null) {
-    if (!cat) return <span className="text-gray-400 text-xs">—</span>;
-    return (
-      <span className={cn('px-2 py-0.5 text-xs font-semibold rounded',
-        cat === 'A' ? 'bg-amber-100 text-amber-700' :
-        cat === 'B' ? 'bg-sky-100 text-sky-700' : 'bg-slate-100 text-slate-700')}>
-        {cat}
-      </span>
-    );
-  }
+  function categoryBadge(cat: string | null) { return <CategoryBadge cat={cat} />; }
 
   function limitBadge(status: ReturnType<typeof getLimitStatus>) {
     if (status === 'exceeded') return (
@@ -656,6 +826,14 @@ export default function CashDepositsTracker() {
         {/* Header */}
         <div className="flex items-center justify-between">
           <h1 className="text-xl font-semibold text-gray-900">Cash Deposit Tracker</h1>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setShowPlanner(true)}
+              className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium border border-blue-200 text-blue-700 bg-blue-50 rounded-lg hover:bg-blue-100 transition-colors"
+            >
+              <Calculator size={13} />
+              Plan Deposit
+            </button>
           <div className="flex bg-gray-100 rounded-lg p-0.5 gap-0.5">
             {VIEW_TABS.map(({ mode, label }) => (
               <button
@@ -667,6 +845,7 @@ export default function CashDepositsTracker() {
                 {label}
               </button>
             ))}
+          </div>
           </div>
         </div>
 
@@ -875,6 +1054,11 @@ export default function CashDepositsTracker() {
             await load();
           }}
         />
+      )}
+
+      {/* Deposit planner modal */}
+      {showPlanner && (
+        <DepositPlannerModal rows={rows} onClose={() => setShowPlanner(false)} />
       )}
     </Layout>
   );
