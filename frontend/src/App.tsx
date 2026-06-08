@@ -20,6 +20,7 @@ import CashLedger from './pages/CashLedger';
 import CompanyProfiles from './pages/CompanyProfiles';
 import CompanyProfileDetail from './pages/CompanyProfileDetail';
 import CashDepositsTracker from './pages/CashDepositsTracker';
+import AuditLogs from './pages/AuditLogs';
 
 // Roles allowed to access operational pages (not plain users)
 const OPS = ['super_admin', 'admin', 'developer'] as const;
@@ -57,6 +58,9 @@ export default function App() {
 
           {/* Management — super_admin, admin only */}
           <Route path="/users" element={<PrivateRoute roles={[...MGMT]}><UserManagement /></PrivateRoute>} />
+
+          {/* Super admin only */}
+          <Route path="/audit-logs" element={<PrivateRoute roles={['super_admin']}><AuditLogs /></PrivateRoute>} />
 
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>

@@ -135,6 +135,10 @@ export const clearEmailImportLog = () => api.delete('/email-monitor/recent');
 export const deleteReconResult = (id: number) => api.delete(`/reconciliation/results/${id}`);
 export const clearReconData = () => api.delete('/reconciliation/clear-all');
 
+// Audit logs (super_admin only)
+export const getAuditLogs = (page = 1, limit = 100, entity_type?: string) =>
+  api.get('/audit-logs', { params: { page, limit, ...(entity_type ? { entity_type } : {}) } });
+
 // Cash ledger
 export const getCashEntries = (currency?: string, startDate?: string, endDate?: string) =>
   api.get('/cash/entries', { params: { currency, startDate, endDate } });

@@ -4,7 +4,7 @@ import { useAuth } from '../auth/AuthContext';
 import { cn } from '../lib/utils';
 import {
   LayoutDashboard, Upload, FileText, ArrowLeftRight,
-  Flag, Users, LogOut, Landmark, ReceiptText, Building2, Settings, Coins, Briefcase, Banknote,
+  Flag, Users, LogOut, Landmark, ReceiptText, Building2, Settings, Coins, Briefcase, Banknote, ClipboardList,
 } from 'lucide-react';
 
 export function Layout({ children }: { children: ReactNode }) {
@@ -86,6 +86,15 @@ export function Layout({ children }: { children: ReactNode }) {
               className={({ isActive }) => cn('flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition-colors',
                 isActive ? 'bg-blue-600 text-white' : 'text-slate-300 hover:bg-slate-800 hover:text-white')}>
               <Users size={16} />Users
+            </NavLink>
+          )}
+
+          {/* Super admin only */}
+          {user?.role === 'super_admin' && (
+            <NavLink to="/audit-logs"
+              className={({ isActive }) => cn('flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition-colors',
+                isActive ? 'bg-blue-600 text-white' : 'text-slate-300 hover:bg-slate-800 hover:text-white')}>
+              <ClipboardList size={16} />Audit Logs
             </NavLink>
           )}
         </nav>

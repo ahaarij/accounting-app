@@ -14,6 +14,7 @@ import { EmailMonitorModule } from './email-monitor/email-monitor.module';
 import { CashModule } from './cash/cash.module';
 import { CompaniesModule } from './companies/companies.module';
 import { CashDepositsModule } from './cash-deposits/cash-deposits.module';
+import { AuditModule } from './audit/audit.module';
 
 @Module({
   imports: [
@@ -50,6 +51,7 @@ import { CashDepositsModule } from './cash-deposits/cash-deposits.module';
     CashModule,
     CompaniesModule,
     CashDepositsModule,
+    AuditModule,
   ],
   controllers: [AppController],
   providers: [AppService],
