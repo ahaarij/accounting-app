@@ -6,6 +6,14 @@ import { Badge } from '../components/ui/badge';
 import { getSummary, getFlags, getBankAccounts, getNetPosition } from '../api';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from 'recharts';
 import { AlertTriangle, CheckCircle, XCircle, ChevronRight, Landmark, Building2 } from 'lucide-react';
+import {
+  Chart as ChartJS, CategoryScale, LinearScale, BarElement,
+  Tooltip as CJTooltip, Legend as CJLegend,
+} from 'chart.js';
+import { Bar } from 'react-chartjs-2';
+import { fetchCashDeposits } from '../api/cashDeposits';
+
+ChartJS.register(CategoryScale, LinearScale, BarElement, CJTooltip, CJLegend);
 
 const FLAG_DESTINATIONS: Record<string, string> = {
   missing_invoice: '/cash-ledger',
@@ -25,6 +33,40 @@ function fmt(n: number, decimals = 2) {
 
 const netPositionCache: Record<number, { date: string; aed: number; usd: number }[]> = {};
 
+function currentMonthStr(): string {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+}
+
+function getMonthRange(month: string): { from: string; to: string } {
+  const [y, m] = month.split('-').map(Number);
+  const from = `${month}-01`;
+  const now = new Date();
+  if (y === now.getFullYear() && m === now.getMonth() + 1) {
+    return { from, to: `${month}-${String(now.getDate()).padStart(2, '0')}` };
+  }
+  const lastDay = new Date(y, m, 0).getDate();
+  return { from, to: `${month}-${String(lastDay).padStart(2, '0')}` };
+}
+
+function buildDailyTotals(month: string, toDate: string, rows: any[]): { labels: string[]; data: number[] } {
+  const lastDay = parseInt(toDate.split('-')[2]);
+  const byDay: Record<string, number> = {};
+  rows.forEach((row: any) => {
+    (row.deposits || []).forEach((d: any) => {
+      byDay[d.date] = (byDay[d.date] || 0) + d.amount;
+    });
+  });
+  const labels: string[] = [];
+  const data: number[] = [];
+  for (let day = 1; day <= lastDay; day++) {
+    const dateStr = `${month}-${String(day).padStart(2, '0')}`;
+    labels.push(String(day));
+    data.push(byDay[dateStr] || 0);
+  }
+  return { labels, data };
+}
+
 type ViewMode = 'accounts' | 'banks' | 'companies';
 
 export default function Dashboard() {
@@ -37,6 +79,10 @@ export default function Dashboard() {
   const [chartCcy, setChartCcy]         = useState<'AED' | 'USD' | 'both'>('AED');
   const [chartPeriod, setChartPeriod]   = useState<30 | 365>(30);
   const [chartLoading, setChartLoading] = useState(true);
+
+  const [depositMonth, setDepositMonth]       = useState(currentMonthStr());
+  const [depositChartData, setDepositChartData] = useState<{ labels: string[]; data: number[] } | null>(null);
+  const [depositChartLoading, setDepositChartLoading] = useState(true);
 
   useEffect(() => {
     Promise.all([getSummary(), getFlags(undefined, false), getBankAccounts()])
@@ -56,6 +102,14 @@ export default function Dashboard() {
       setNetPosition(res.data);
     }).finally(() => setChartLoading(false));
   }, [chartPeriod]);
+
+  useEffect(() => {
+    setDepositChartLoading(true);
+    const { from, to } = getMonthRange(depositMonth);
+    fetchCashDeposits(from, to)
+      .then((data: any) => setDepositChartData(buildDailyTotals(depositMonth, to, data.rows || [])))
+      .finally(() => setDepositChartLoading(false));
+  }, [depositMonth]);
 
   const totalAed = useMemo(
     () => accounts.filter(a => a.currency === 'AED' && Number(a.closing_balance) > 0).reduce((s, a) => s + Number(a.closing_balance), 0),
@@ -254,6 +308,70 @@ export default function Dashboard() {
                   )}
                 </LineChart>
               </ResponsiveContainer>
+            )}
+          </CardBody>
+        </Card>
+
+        {/* Daily cash deposits chart */}
+        <Card>
+          <CardHeader>
+            <div className="flex items-center justify-between">
+              <p className="font-medium text-gray-900 text-sm">Daily Cash Deposits</p>
+              <input
+                type="month"
+                value={depositMonth}
+                max={currentMonthStr()}
+                onChange={(e) => setDepositMonth(e.target.value)}
+                className="text-xs border border-gray-200 rounded-md px-2 py-1 text-gray-700 focus:outline-none focus:ring-1 focus:ring-blue-400"
+              />
+            </div>
+          </CardHeader>
+          <CardBody>
+            {depositChartLoading ? (
+              <div className="flex items-center justify-center h-[200px]">
+                <div className="w-6 h-6 border-2 border-blue-600 border-t-transparent rounded-full animate-spin" />
+              </div>
+            ) : !depositChartData || depositChartData.data.every(v => v === 0) ? (
+              <div className="flex items-center justify-center h-[200px] text-sm text-gray-400">
+                No cash deposits recorded for this month
+              </div>
+            ) : (
+              <div style={{ height: 200 }}>
+                <Bar
+                  data={{
+                    labels: depositChartData.labels,
+                    datasets: [{
+                      label: 'AED Deposited',
+                      data: depositChartData.data,
+                      backgroundColor: 'rgba(16, 185, 129, 0.7)',
+                      borderColor: 'rgba(5, 150, 105, 1)',
+                      borderWidth: 1,
+                      borderRadius: 3,
+                    }],
+                  }}
+                  options={{
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                      legend: { display: false },
+                      tooltip: {
+                        callbacks: {
+                          label: (ctx) => `AED ${Number(ctx.raw).toLocaleString('en-AE', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`,
+                        },
+                      },
+                    },
+                    scales: {
+                      x: { grid: { display: false }, ticks: { font: { size: 10 } } },
+                      y: {
+                        ticks: {
+                          font: { size: 10 },
+                          callback: (v) => Number(v) >= 1_000_000 ? `${(Number(v) / 1_000_000).toFixed(1)}M` : Number(v) >= 1_000 ? `${Math.round(Number(v) / 1_000)}K` : String(v),
+                        },
+                      },
+                    },
+                  }}
+                />
+              </div>
             )}
           </CardBody>
         </Card>

@@ -398,6 +398,7 @@ function DepositPlannerModal({ rows, onClose, onDepositsAdded }: {
   const [added, setAdded] = useState<Set<number>>(new Set());
   const [saving, setSaving] = useState<Set<number>>(new Set());
   const [addingAll, setAddingAll] = useState(false);
+  const [descError, setDescError] = useState(false);
 
   function calculate() {
     const n = parseFloat(amount.replace(/,/g, ''));
@@ -409,13 +410,15 @@ function DepositPlannerModal({ rows, onClose, onDepositsAdded }: {
   }
 
   async function addOne(i: number, alloc: PlanAllocation) {
+    if (!description.trim()) { setDescError(true); return; }
+    setDescError(false);
     setSaving((prev) => new Set(prev).add(i));
     try {
       await createCashDeposit({
         company_id: alloc.company_id,
         bank_account: alloc.bank_account,
         date: todayStr(),
-        description: description.trim() || 'Large deposit',
+        description: description.trim(),
         amount: alloc.amount,
       });
       setAdded((prev) => new Set(prev).add(i));
@@ -427,6 +430,8 @@ function DepositPlannerModal({ rows, onClose, onDepositsAdded }: {
 
   async function addAll() {
     if (!plan) return;
+    if (!description.trim()) { setDescError(true); return; }
+    setDescError(false);
     setAddingAll(true);
     try {
       for (let i = 0; i < plan.length; i++) {
@@ -435,7 +440,7 @@ function DepositPlannerModal({ rows, onClose, onDepositsAdded }: {
           company_id: plan[i].company_id,
           bank_account: plan[i].bank_account,
           date: todayStr(),
-          description: description.trim() || 'Large deposit',
+          description: description.trim(),
           amount: plan[i].amount,
         });
         setAdded((prev) => new Set(prev).add(i));
@@ -484,14 +489,18 @@ function DepositPlannerModal({ rows, onClose, onDepositsAdded }: {
           </div>
           {plan && plan.length > 0 && (
             <div>
-              <label className="block text-xs font-medium text-gray-700 mb-1">Description (applied to all)</label>
+              <label className="block text-xs font-medium text-gray-700 mb-1">
+                Description (applied to all) <span className="text-red-500">*</span>
+              </label>
               <input
                 type="text"
                 value={description}
-                onChange={(e) => setDescription(e.target.value)}
+                onChange={(e) => { setDescription(e.target.value); if (e.target.value.trim()) setDescError(false); }}
                 placeholder="e.g. Cash deposit Jun 2026"
-                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                className={cn('w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2',
+                  descError ? 'border-red-400 focus:ring-red-400' : 'border-gray-300 focus:ring-blue-500')}
               />
+              {descError && <p className="text-xs text-red-500 mt-1">Description is required before adding deposits</p>}
             </div>
           )}
         </div>
