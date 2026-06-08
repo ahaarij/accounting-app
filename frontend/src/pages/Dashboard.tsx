@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Layout, PageHeader } from '../components/Layout';
 import { Card, CardHeader, CardBody } from '../components/ui/card';
@@ -22,6 +22,90 @@ const SEVERITY_BORDER: Record<string, string> = {
 
 function fmt(n: number, decimals = 2) {
   return n.toLocaleString('en-AE', { minimumFractionDigits: decimals, maximumFractionDigits: decimals });
+}
+
+const MONTH_NAMES = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+
+function MonthPicker({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+  const now = new Date();
+  const [year, setYear] = useState(() => parseInt(value.split('-')[0]));
+  const selMonth = parseInt(value.split('-')[1]) - 1;
+  const selYear  = parseInt(value.split('-')[0]);
+
+  useEffect(() => {
+    function onClick(e: MouseEvent) {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    }
+    document.addEventListener('mousedown', onClick);
+    return () => document.removeEventListener('mousedown', onClick);
+  }, []);
+
+  function select(m: number) {
+    const padM = String(m + 1).padStart(2, '0');
+    onChange(`${year}-${padM}`);
+    setOpen(false);
+  }
+
+  function isFuture(m: number) {
+    return year > now.getFullYear() || (year === now.getFullYear() && m > now.getMonth());
+  }
+
+  const label = `${MONTH_NAMES[selMonth]} ${selYear}`;
+
+  return (
+    <div className="relative" ref={ref}>
+      <button
+        onClick={() => setOpen(o => !o)}
+        className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium border border-gray-200 rounded-lg text-gray-700 bg-white hover:bg-gray-50 transition-colors"
+      >
+        {label}
+        <svg width="10" height="10" viewBox="0 0 10 10" fill="none" className="text-gray-400">
+          <path d="M2 3.5L5 6.5L8 3.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+        </svg>
+      </button>
+      {open && (
+        <div className="absolute right-0 top-9 z-50 bg-white border border-gray-200 rounded-xl shadow-lg p-3 w-52">
+          {/* Year nav */}
+          <div className="flex items-center justify-between mb-2.5">
+            <button onClick={() => setYear(y => y - 1)} className="p-1 rounded hover:bg-gray-100 text-gray-500">
+              <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M9 11L5 7L9 3" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg>
+            </button>
+            <span className="text-xs font-semibold text-gray-800">{year}</span>
+            <button
+              onClick={() => setYear(y => y + 1)}
+              disabled={year >= now.getFullYear()}
+              className="p-1 rounded hover:bg-gray-100 text-gray-500 disabled:opacity-30"
+            >
+              <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M5 3L9 7L5 11" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg>
+            </button>
+          </div>
+          {/* Month grid */}
+          <div className="grid grid-cols-3 gap-1">
+            {MONTH_NAMES.map((name, m) => {
+              const isSelected = m === selMonth && year === selYear;
+              const disabled   = isFuture(m);
+              return (
+                <button
+                  key={m}
+                  onClick={() => !disabled && select(m)}
+                  disabled={disabled}
+                  className={`px-2 py-1.5 text-xs rounded-lg font-medium transition-colors ${
+                    isSelected  ? 'bg-blue-600 text-white' :
+                    disabled    ? 'text-gray-300 cursor-default' :
+                                  'text-gray-600 hover:bg-gray-100'
+                  }`}
+                >
+                  {name}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
+    </div>
+  );
 }
 
 const netPositionCache: Record<number, { date: string; aed: number; usd: number }[]> = {};
@@ -310,13 +394,7 @@ export default function Dashboard() {
           <CardHeader>
             <div className="flex items-center justify-between">
               <p className="font-medium text-gray-900 text-sm">Daily Cash Deposits</p>
-              <input
-                type="month"
-                value={depositMonth}
-                max={currentMonthStr()}
-                onChange={(e) => setDepositMonth(e.target.value)}
-                className="text-xs border border-gray-200 rounded-md px-2 py-1 text-gray-700 focus:outline-none focus:ring-1 focus:ring-blue-400"
-              />
+              <MonthPicker value={depositMonth} onChange={setDepositMonth} />
             </div>
           </CardHeader>
           <CardBody>

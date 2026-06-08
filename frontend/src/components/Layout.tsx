@@ -112,7 +112,7 @@ export function Layout({ children }: { children: ReactNode }) {
           <button onClick={handleLogout} className="flex items-center gap-2 w-full px-2 py-1.5 text-slate-400 hover:text-white text-xs rounded-lg hover:bg-slate-800 transition-colors">
             <LogOut size={13} />Sign out
           </button>
-          <p className="text-slate-600 text-xs text-center mt-2">v1.0</p>
+          <p className="text-slate-600 text-xs text-center mt-2">v1.01</p>
         </div>
       </aside>
 
