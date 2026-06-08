@@ -302,7 +302,7 @@ function DepositModal({ company, deposit, onClose, onSave }: {
             <label className="block text-xs font-medium text-gray-700 mb-1">Amount (AED)</label>
             <input
               type="number" value={amount} onChange={(e) => setAmount(e.target.value)}
-              min="0.01" step="0.01" required placeholder="0.00"
+              min="1" step="1" required placeholder="0"
               className={cn('w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2',
                 overTxLimit ? 'border-amber-400 focus:ring-amber-400' : 'border-gray-300 focus:ring-blue-500')}
             />
