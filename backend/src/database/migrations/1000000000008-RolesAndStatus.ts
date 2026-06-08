@@ -5,6 +5,15 @@ export class RolesAndStatus1000000000008 implements MigrationInterface {
   name = 'RolesAndStatus1000000000008';
 
   public async up(queryRunner: QueryRunner): Promise<void> {
+    // Drop old role constraint before any data changes
+    await queryRunner.query(`ALTER TABLE users DROP CONSTRAINT IF EXISTS users_role_check`);
+
+    // Add new roles constraint
+    await queryRunner.query(`
+      ALTER TABLE users ADD CONSTRAINT users_role_check
+      CHECK (role IN ('super_admin', 'admin', 'developer', 'user'))
+    `);
+
     // Add status column (existing users are already active)
     await queryRunner.query(`
       ALTER TABLE users
@@ -12,9 +21,6 @@ export class RolesAndStatus1000000000008 implements MigrationInterface {
     `);
 
     // Migrate old roles → new roles
-    // accountant → admin  (accounting team = admin)
-    // viewer    → user
-    // admin stays admin
     await queryRunner.query(`UPDATE users SET role = 'admin' WHERE role = 'accountant'`);
     await queryRunner.query(`UPDATE users SET role = 'user'  WHERE role = 'viewer'`);
 
