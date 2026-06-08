@@ -129,7 +129,6 @@ export default function Import() {
       />
 
       <div className="p-8 space-y-6">
-        {false && (
         <div className="grid grid-cols-2 gap-4">
           <FileDropZone
             label="Group A Balances"
@@ -143,20 +142,19 @@ export default function Import() {
             onUpload={upload('group-b')}
             disabled={!canEdit}
           />
-          <FileDropZone
+          {false && <FileDropZone
             label="Daily Transactions"
             description="Date-block format · TRANSACTION ON rows"
             onUpload={upload('transactions')}
             disabled={!canEdit}
-          />
-          <FileDropZone
+          />}
+          {false && <FileDropZone
             label="Daily Cashflow"
             description="Filename = date · Sheet1 cashflow · Sheet2 counterparty"
             onUpload={upload('cashflow')}
             disabled={!canEdit}
-          />
+          />}
         </div>
-        )}
 
         <div className="border-t pt-4">
           <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1">Sales Registers</p>
@@ -166,7 +164,7 @@ export default function Import() {
           <SalesMultiUpload disabled={!canEdit} />
         </div>
 
-        {false && canEdit && (
+        {canEdit && (
           <Card>
             <CardBody className="flex items-center justify-between">
               <div>

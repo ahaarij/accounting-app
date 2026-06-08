@@ -59,7 +59,12 @@ export class CashDepositsService {
     for (const company of companies) {
       const companyAccounts = parseAccounts(company.company_active_accounts);
       const personalAccounts = parseAccounts(company.personal_active_accounts);
-      const allAccounts = [...companyAccounts, ...personalAccounts];
+      const seen = new Set<string>();
+      const allAccounts = [...companyAccounts, ...personalAccounts].filter((a) => {
+        if (seen.has(a)) return false;
+        seen.add(a);
+        return true;
+      });
       const accountList = allAccounts.length > 0 ? allAccounts : [null];
 
       for (const account of accountList) {
