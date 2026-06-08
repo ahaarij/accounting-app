@@ -1,4 +1,4 @@
-import { Controller, Post, Get, Patch, Body, Param, Query, UseGuards } from '@nestjs/common';
+import { Controller, Post, Get, Patch, Delete, Body, Param, Query, UseGuards } from '@nestjs/common';
 import { ReconciliationService } from './reconciliation.service';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { RolesGuard } from '../auth/roles.guard';
@@ -12,7 +12,7 @@ export class ReconciliationController {
   ) {}
 
   @Post('run')
-  @Roles('admin', 'accountant')
+  @Roles('super_admin', 'admin', 'developer')
   async run(@Body() body: { date?: string }) {
     return this.reconciliationService.runAll(body?.date);
   }
@@ -42,8 +42,14 @@ export class ReconciliationController {
     return this.reconciliationService.getFlags(date, resolvedBool);
   }
 
+  @Delete('results/:id')
+  @Roles('super_admin', 'admin', 'developer')
+  async deleteResult(@Param('id') id: string) {
+    return this.reconciliationService.deleteResult(parseInt(id));
+  }
+
   @Patch('flags/:id/resolve')
-  @Roles('admin', 'accountant')
+  @Roles('super_admin', 'admin', 'developer')
   async resolveFlag(
     @Param('id') id: string,
     @Body() body: { notes?: string },

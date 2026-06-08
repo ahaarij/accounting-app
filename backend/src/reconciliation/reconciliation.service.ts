@@ -576,6 +576,11 @@ export class ReconciliationService {
     return this.dataSource.query(sql, params);
   }
 
+  async deleteResult(id: number) {
+    await this.resultRepo.delete(id);
+    return { deleted: id };
+  }
+
   async getFlags(date?: string, resolved?: boolean) {
     let sql = `
       SELECT

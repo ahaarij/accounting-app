@@ -14,7 +14,7 @@ export class SalesController {
   constructor(private readonly salesService: SalesService) {}
 
   @Post('import')
-  @Roles('admin', 'accountant')
+  @Roles('super_admin', 'admin', 'developer')
   @UseInterceptors(FileInterceptor('file', {
     storage: diskStorage({
       destination: (req, file, cb) => {

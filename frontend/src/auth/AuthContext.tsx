@@ -1,9 +1,12 @@
 import { createContext, useContext, useState, useCallback, ReactNode } from 'react';
 
+export type UserRole = 'super_admin' | 'admin' | 'developer' | 'user';
+
 interface AuthUser {
   id: number;
   email: string;
-  role: 'admin' | 'accountant' | 'viewer';
+  role: UserRole;
+  name?: string;
 }
 
 interface AuthContextValue {
@@ -11,19 +14,18 @@ interface AuthContextValue {
   token: string | null;
   login: (token: string) => void;
   logout: () => void;
-  isAdmin: boolean;
-  isViewer: boolean;
+  isSuperAdmin: boolean;
+  isAdmin: boolean;       // super_admin or admin
+  canEdit: boolean;       // anyone except plain user
 }
 
 const AuthContext = createContext<AuthContextValue>(null!);
 
 function parseToken(token: string): AuthUser | null {
   try {
-    const payload = JSON.parse(atob(token.split('.')[1]));
-    return { id: payload.sub, email: payload.email, role: payload.role };
-  } catch {
-    return null;
-  }
+    const p = JSON.parse(atob(token.split('.')[1]));
+    return { id: p.sub, email: p.email, role: p.role, name: p.name };
+  } catch { return null; }
 }
 
 export function AuthProvider({ children }: { children: ReactNode }) {
@@ -48,8 +50,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   return (
     <AuthContext.Provider value={{
       user, token, login, logout,
-      isAdmin: user?.role === 'admin',
-      isViewer: user?.role === 'viewer',
+      isSuperAdmin: user?.role === 'super_admin',
+      isAdmin: user?.role === 'super_admin' || user?.role === 'admin',
+      canEdit: user?.role !== 'user',
     }}>
       {children}
     </AuthContext.Provider>

@@ -23,6 +23,12 @@ export class CsvAccount {
   @Column({ type: 'varchar', length: 255, nullable: true })
   branch: string;
 
+  @Column({ type: 'varchar', length: 50, default: 'manual' })
+  source: string;
+
+  @Column({ type: 'varchar', length: 500, nullable: true })
+  pdf_password: string;
+
   @CreateDateColumn()
   created_at: Date;
 

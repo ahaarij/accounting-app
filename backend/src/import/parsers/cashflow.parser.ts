@@ -43,36 +43,48 @@ export class CashflowParser {
     if (!ws || !ws['!ref']) return [];
     const aoa: any[][] = XLSX.utils.sheet_to_json(ws, { header: 1, defval: null, raw: true });
     const rows: CashflowRow[] = [];
-    let date = fileDate
-
-    const SUMMARY_KEYWORDS = ['DAILY TRAN', 'CASH ', 'HOLD', 'BANK ACCOUNT', 'PAY A/C', 'TRANSIT', 'TOTAL', 'OP BAL', 'OPENING'];
+    let date = fileDate;
+    let inTransactionSection = false;
 
     for (const row of aoa) {
       if (!row || row.every(c => c == null)) continue;
 
-      // Check col 1 for CASHFLOW AS OF header
-      const col1 = row[1] != null ? String(row[1]).trim().toUpperCase() : '';
-      if (col1.includes('CASHFLOW AS OF') || col1.includes('CASHFLOW')) {
+      const col1 = row[1] != null ? String(row[1]).trim() : '';
+      const col1Upper = col1.toUpperCase();
+
+      // Extract date from "CASHFLOW AS OF DD/MM/YYYY" header
+      if (!inTransactionSection && col1Upper.includes('CASHFLOW')) {
         const match = col1.match(/(\d{1,2}[\/\-\.]\d{1,2}[\/\-\.]\d{2,4})/);
         if (match) { const d = normalizeDate(match[1]); if (d) date = d; }
         continue;
       }
 
-      // col 1 is "Op Bal" label (appears once), col 2 is the transaction group name
-      const col1Raw = row[1] != null ? String(row[1]).trim() : '';
-      const col2Raw = row[2] != null ? String(row[2]).trim() : '';
-      const col2Upper = col2Raw.toUpperCase();
-
-      // Check if col 2 matches a summary keyword
-      const isSummaryRow = SUMMARY_KEYWORDS.some(k => col2Upper.includes(k));
-      if (isSummaryRow) {
-        rows.push({
-          date,
-          transaction_group: col2Raw || col1Raw || null,
-          amount_aed: toNumber(row[3]),
-          amount_usd: toNumber(row[4]),
-        });
+      // The "NATURE" header row marks the start of the actual transactions section
+      if (col1Upper === 'NATURE') {
+        inTransactionSection = true;
+        continue;
       }
+
+      // "Cl Bal" or "REMARKS" marks the end of the transactions section
+      if (inTransactionSection && (col1Upper === 'CL BAL' || col1Upper === 'REMARKS')) {
+        break;
+      }
+
+      if (!inTransactionSection) continue;
+
+      // Only include rows where Nature = "CASH"
+      if (col1Upper !== 'CASH') continue;
+
+      const description = row[2] != null ? String(row[2]).trim() : null;
+      if (!description) continue;
+
+      // Columns: [1]=Nature [2]=Description [3]=Inward AED [4]=Inward USD [5]=Outward AED [6]=Outward USD
+      rows.push({
+        date,
+        transaction_group: description,
+        amount_aed: toNumber(row[3]) ?? toNumber(row[5]),
+        amount_usd: toNumber(row[4]) ?? toNumber(row[6]),
+      });
     }
     return rows;
   }

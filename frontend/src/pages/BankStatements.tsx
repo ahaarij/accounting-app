@@ -7,20 +7,19 @@ import { Badge } from '../components/ui/badge';
 import { useAuth } from '../auth/AuthContext';
 import {
   getCsvAccountsStats, createCsvAccount, updateCsvAccount,
-  deleteCsvAccount, importCsvFile,
+  deleteCsvAccount, importCsvFile, importPdfFile, previewPdfFile, setCsvAccountPdfPassword,
 } from '../api';
 import { fmtDate } from '../utils/format';
-import { Upload, Plus, Pencil, Trash2, X, Check, FileText } from 'lucide-react';
+import { Upload, Plus, Pencil, Trash2, X, Check, FileText, Lock, Unlock, Eye, EyeOff } from 'lucide-react';
 
 const CURRENCIES = ['AED', 'USD', 'EUR'];
-
 const emptyForm = { account_number: '', company_name: '', currency: 'AED', bank_name: '' };
 
 export default function BankStatements() {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
-  const { isAdmin, user } = useAuth();
-  const canWrite = isAdmin || user?.role === 'accountant';
+  const { canEdit } = useAuth();
+  const canWrite = canEdit;
 
   const startDate = searchParams.get('startDate') ?? '';
   const endDate = searchParams.get('endDate') ?? '';
@@ -45,12 +44,30 @@ export default function BankStatements() {
   // Delete confirm
   const [deleteId, setDeleteId] = useState<number | null>(null);
 
+  // PDF password management
+  const [pwdEditId, setPwdEditId] = useState<number | null>(null);
+  const [pwdValue, setPwdValue] = useState('');
+  const [pwdShow, setPwdShow] = useState(false);
+  const [pwdSaving, setPwdSaving] = useState(false);
+  const [pwdError, setPwdError] = useState('');
+
   // CSV import
   const fileRef = useRef<HTMLInputElement>(null);
   const [importing, setImporting] = useState(false);
   const [importResult, setImportResult] = useState<any>(null);
   const [importError, setImportError] = useState('');
   const [dragOver, setDragOver] = useState(false);
+
+  // PDF import / preview
+  const pdfRef = useRef<HTMLInputElement>(null);
+  const [pdfMode, setPdfMode] = useState<'import' | 'preview'>('import');
+  const [pdfAccountId, setPdfAccountId] = useState('');
+  const [pdfPassword, setPdfPassword] = useState('');
+  const [pdfPwdShow, setPdfPwdShow] = useState(false);
+  const [pdfBusy, setPdfBusy] = useState(false);
+  const [pdfResult, setPdfResult] = useState<any>(null);
+  const [pdfError, setPdfError] = useState('');
+  const [pdfDragOver, setPdfDragOver] = useState(false);
 
   const load = async () => {
     setLoading(true);
@@ -121,6 +138,7 @@ export default function BankStatements() {
     try { await deleteCsvAccount(id); load(); } finally { setDeleteId(null); }
   };
 
+  // CSV import
   const handleFile = async (file: File) => {
     if (!file.name.endsWith('.csv')) { setImportError('Please upload a .csv file'); return; }
     setImporting(true); setImportResult(null); setImportError('');
@@ -131,6 +149,44 @@ export default function BankStatements() {
     } catch (e: any) {
       setImportError(e?.response?.data?.message ?? 'Import failed');
     } finally { setImporting(false); }
+  };
+
+  // PDF import / preview handler
+  const handlePdfFile = async (file: File) => {
+    if (!file.name.toLowerCase().endsWith('.pdf')) { setPdfError('Please upload a .pdf file'); return; }
+    setPdfBusy(true); setPdfResult(null); setPdfError('');
+    try {
+      if (pdfMode === 'preview') {
+        const res = await previewPdfFile(file, pdfPassword || undefined);
+        setPdfResult({ _preview: true, ...res.data });
+      } else {
+        const res = await importPdfFile(file, pdfAccountId ? parseInt(pdfAccountId) : undefined, pdfPassword || undefined);
+        setPdfResult(res.data);
+        load();
+      }
+    } catch (e: any) {
+      setPdfError(e?.response?.data?.message ?? 'Failed');
+    } finally { setPdfBusy(false); }
+  };
+
+  // Per-account PDF password
+  const openPwdEdit = (a: any) => {
+    setPwdEditId(a.id);
+    setPwdValue(a.pdf_password ?? '');
+    setPwdShow(false);
+    setPwdError('');
+  };
+
+  const handleSavePwd = async () => {
+    if (!pwdEditId) return;
+    setPwdSaving(true); setPwdError('');
+    try {
+      const updated = await setCsvAccountPdfPassword(pwdEditId, pwdValue);
+      setAccounts(prev => prev.map(a => a.id === pwdEditId ? { ...a, pdf_password: (updated.data as any).pdf_password } : a));
+      setPwdEditId(null);
+    } catch (e: any) {
+      setPwdError(e?.response?.data?.message ?? 'Failed to save password');
+    } finally { setPwdSaving(false); }
   };
 
   return (
@@ -153,27 +209,177 @@ export default function BankStatements() {
               >
                 <Upload size={24} className="mx-auto mb-2 text-gray-400" />
                 <p className="text-sm font-medium text-gray-700">Drop a .csv file here or click to browse</p>
-                <p className="text-xs text-gray-400 mt-1">The account number in the CSV must be registered below first</p>
+                <p className="text-xs text-gray-400 mt-1">Account is auto-detected from the file</p>
                 <input ref={fileRef} type="file" accept=".csv" className="hidden"
                   onChange={(e) => { const f = e.target.files?.[0]; if (f) handleFile(f); e.target.value = ''; }} />
               </div>
 
               {importing && <p className="text-sm text-blue-600 mt-3 text-center">Importing...</p>}
-
               {importResult && (
                 <div className="mt-3 flex items-start gap-2 bg-green-50 border border-green-200 rounded-lg px-4 py-3 text-sm text-green-800">
                   <Check size={15} className="mt-0.5 shrink-0" />
                   <span>
                     <strong>{importResult.company_name}</strong> ({importResult.account_number}) —{' '}
-                    {importResult.imported} transactions imported, {importResult.skipped} skipped (already existed)
+                    {importResult.imported} imported, {importResult.skipped} skipped
                   </span>
                 </div>
               )}
-
               {importError && (
                 <div className="mt-3 flex items-start gap-2 bg-red-50 border border-red-200 rounded-lg px-4 py-3 text-sm text-red-700">
                   <X size={15} className="mt-0.5 shrink-0" />
                   <span>{importError}</span>
+                </div>
+              )}
+            </CardBody>
+          </Card>
+        )}
+
+        {/* PDF Import / Preview */}
+        {canWrite && (
+          <Card>
+            <CardHeader>
+              <div className="flex items-center justify-between">
+                <p className="font-medium text-gray-900 text-sm">PDF Statement</p>
+                <div className="flex items-center gap-1 bg-gray-100 rounded-lg p-0.5 text-xs">
+                  {(['import', 'preview'] as const).map(m => (
+                    <button key={m} onClick={() => { setPdfMode(m); setPdfResult(null); setPdfError(''); }}
+                      className={`px-3 py-1 rounded-md font-medium capitalize transition-colors ${pdfMode === m ? 'bg-white shadow text-gray-900' : 'text-gray-500 hover:text-gray-700'}`}>
+                      {m}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </CardHeader>
+            <CardBody className="space-y-3">
+              <div className="grid grid-cols-2 gap-3">
+                {pdfMode === 'import' && (
+                  <div>
+                    <label className="text-xs text-gray-500 mb-1 block">Account</label>
+                    <select value={pdfAccountId} onChange={e => setPdfAccountId(e.target.value)}
+                      className="w-full border border-gray-200 rounded-lg px-2 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-blue-500">
+                      <option value="">Auto-detect from filename</option>
+                      {accounts.map(a => (
+                        <option key={a.id} value={a.id}>{a.company_name} ({a.currency})</option>
+                      ))}
+                    </select>
+                  </div>
+                )}
+                <div className={pdfMode === 'preview' ? 'col-span-2' : ''}>
+                  <label className="text-xs text-gray-500 mb-1 block">Password {pdfMode === 'preview' ? '(if protected)' : 'override'}</label>
+                  <div className="relative">
+                    <input type={pdfPwdShow ? 'text' : 'password'} value={pdfPassword}
+                      onChange={e => setPdfPassword(e.target.value)}
+                      placeholder={pdfMode === 'import' ? 'Uses saved password if blank' : 'Leave blank if not protected'}
+                      className="w-full border border-gray-200 rounded-lg px-2 py-1.5 pr-8 text-xs focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                    <button type="button" onClick={() => setPdfPwdShow(v => !v)}
+                      className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600">
+                      {pdfPwdShow ? <EyeOff size={12} /> : <Eye size={12} />}
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              <div
+                onDragOver={(e) => { e.preventDefault(); setPdfDragOver(true); }}
+                onDragLeave={() => setPdfDragOver(false)}
+                onDrop={(e) => { e.preventDefault(); setPdfDragOver(false); const f = e.dataTransfer.files[0]; if (f) handlePdfFile(f); }}
+                onClick={() => pdfRef.current?.click()}
+                className={`border-2 border-dashed rounded-xl p-6 text-center cursor-pointer transition-colors
+                  ${pdfDragOver ? 'border-purple-400 bg-purple-50' : 'border-gray-200 hover:border-gray-300 hover:bg-gray-50'}`}
+              >
+                <FileText size={22} className="mx-auto mb-2 text-gray-400" />
+                <p className="text-sm font-medium text-gray-700">
+                  {pdfMode === 'import' ? 'Drop a .pdf to import transactions' : 'Drop a .pdf to preview extracted text'}
+                </p>
+                <p className="text-xs text-gray-400 mt-1">Password-protected PDFs supported</p>
+                <input ref={pdfRef} type="file" accept=".pdf" className="hidden"
+                  onChange={(e) => { const f = e.target.files?.[0]; if (f) handlePdfFile(f); e.target.value = ''; }} />
+              </div>
+
+              {pdfBusy && <p className="text-sm text-blue-600 text-center">{pdfMode === 'preview' ? 'Extracting text…' : 'Importing…'}</p>}
+
+              {pdfResult && !pdfResult._preview && (
+                <div className="space-y-2">
+                  {pdfResult.warning ? (
+                    <div className="flex items-start gap-2 bg-amber-50 border border-amber-200 rounded-lg px-4 py-3 text-sm text-amber-800">
+                      <span>⚠ {pdfResult.warning}</span>
+                    </div>
+                  ) : (
+                    <div className="flex items-start gap-2 bg-green-50 border border-green-200 rounded-lg px-4 py-3 text-sm text-green-800">
+                      <Check size={15} className="mt-0.5 shrink-0" />
+                      <span>
+                        <strong>{pdfResult.company_name}</strong> ({pdfResult.account_number}) —{' '}
+                        {pdfResult.imported} imported, {pdfResult.skipped} skipped · {pdfResult.pages} page{pdfResult.pages !== 1 ? 's' : ''}
+                      </span>
+                    </div>
+                  )}
+                  {pdfResult.preview_text && (
+                    <pre className="bg-gray-50 border border-gray-200 rounded-lg p-3 text-xs text-gray-700 overflow-auto max-h-64 whitespace-pre-wrap">
+                      {pdfResult.preview_text}
+                    </pre>
+                  )}
+                </div>
+              )}
+
+              {pdfResult?._preview && (
+                <div className="space-y-4">
+                  <p className="text-xs text-gray-500">
+                    {pdfResult.pages} page{pdfResult.pages !== 1 ? 's' : ''} · {pdfResult.lines} non-empty lines
+                    {pdfResult.tables?.length > 0 && ` · ${pdfResult.tables.length} table${pdfResult.tables.length !== 1 ? 's' : ''} detected`}
+                  </p>
+
+                  {pdfResult.tables?.length > 0 ? (
+                    pdfResult.tables.map((tbl: { page: number; rows: string[][] }, ti: number) => {
+                      const [header, ...body] = tbl.rows;
+                      return (
+                        <div key={ti}>
+                          <p className="text-xs font-medium text-gray-500 mb-1.5">
+                            Table {ti + 1} — page {tbl.page}
+                          </p>
+                          <div className="overflow-x-auto rounded-xl border border-gray-200">
+                            <table className="w-full text-sm">
+                              <thead>
+                                <tr className="bg-gray-50">
+                                  {header.map((h, i) => (
+                                    <th key={i} className="px-4 py-2.5 text-left text-xs font-semibold text-gray-600 border-b border-gray-200 whitespace-nowrap">
+                                      {h || '—'}
+                                    </th>
+                                  ))}
+                                </tr>
+                              </thead>
+                              <tbody className="divide-y divide-gray-100">
+                                {body.map((row, ri) => {
+                                  const isTotal = row.some(c => /^total$/i.test(c.trim()));
+                                  return (
+                                    <tr key={ri} className={isTotal ? 'bg-gray-50 font-semibold' : 'hover:bg-gray-50'}>
+                                      {row.map((cell, ci) => (
+                                        <td key={ci} className={`px-4 py-2 text-gray-700 whitespace-nowrap ${/^[\d,.\-]+$/.test(cell.trim()) ? 'text-right font-mono' : ''}`}>
+                                          {cell || '—'}
+                                        </td>
+                                      ))}
+                                    </tr>
+                                  );
+                                })}
+                              </tbody>
+                            </table>
+                          </div>
+                        </div>
+                      );
+                    })
+                  ) : (
+                    <div>
+                      <p className="text-xs font-medium text-gray-500 mb-1.5">No tables detected — raw text</p>
+                      <pre className="bg-gray-50 border border-gray-200 rounded-xl p-3 text-xs text-gray-700 overflow-auto max-h-72 whitespace-pre-wrap">
+                        {pdfResult.text}
+                      </pre>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {pdfError && (
+                <div className="flex items-start gap-2 bg-red-50 border border-red-200 rounded-lg px-4 py-3 text-sm text-red-700">
+                  <X size={15} className="mt-0.5 shrink-0" /><span>{pdfError}</span>
                 </div>
               )}
             </CardBody>
@@ -209,37 +415,24 @@ export default function BankStatements() {
                 </span>
               </p>
               <div className="flex items-center gap-2 flex-wrap">
-                <select
-                  value={filterCompany}
-                  onChange={e => setFilterCompany(e.target.value)}
-                  className="border border-gray-200 rounded-lg px-2 py-1 text-xs text-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-500"
-                >
+                <select value={filterCompany} onChange={e => setFilterCompany(e.target.value)}
+                  className="border border-gray-200 rounded-lg px-2 py-1 text-xs text-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-500">
                   <option value="">All companies</option>
                   {uniqueCompanies.map(c => <option key={c} value={c}>{c}</option>)}
                 </select>
-                <select
-                  value={filterBank}
-                  onChange={e => setFilterBank(e.target.value)}
-                  className="border border-gray-200 rounded-lg px-2 py-1 text-xs text-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-500"
-                >
+                <select value={filterBank} onChange={e => setFilterBank(e.target.value)}
+                  className="border border-gray-200 rounded-lg px-2 py-1 text-xs text-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-500">
                   <option value="">All banks</option>
                   {uniqueBanks.map(b => <option key={b} value={b}>{b}</option>)}
                 </select>
-                <select
-                  value={filterCurrency}
-                  onChange={e => setFilterCurrency(e.target.value)}
-                  className="border border-gray-200 rounded-lg px-2 py-1 text-xs text-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-500"
-                >
+                <select value={filterCurrency} onChange={e => setFilterCurrency(e.target.value)}
+                  className="border border-gray-200 rounded-lg px-2 py-1 text-xs text-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-500">
                   <option value="">All currencies</option>
                   {uniqueCurrencies.map(c => <option key={c} value={c}>{c}</option>)}
                 </select>
                 {hasFilters && (
-                  <button
-                    onClick={() => { setFilterCompany(''); setFilterBank(''); setFilterCurrency(''); }}
-                    className="text-xs text-gray-400 hover:text-gray-600 underline"
-                  >
-                    Clear
-                  </button>
+                  <button onClick={() => { setFilterCompany(''); setFilterBank(''); setFilterCurrency(''); }}
+                    className="text-xs text-gray-400 hover:text-gray-600 underline">Clear</button>
                 )}
                 {canWrite && (
                   <Button variant="secondary" size="sm" onClick={openAdd}>
@@ -291,6 +484,38 @@ export default function BankStatements() {
             </div>
           )}
 
+          {/* Inline PDF password editor */}
+          {pwdEditId !== null && (
+            <div className="px-5 pb-4 border-b border-gray-100">
+              <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 space-y-3">
+                <p className="text-sm font-medium text-amber-800">
+                  PDF Password — {accounts.find(a => a.id === pwdEditId)?.company_name}
+                </p>
+                <p className="text-xs text-amber-700">
+                  This password will be used automatically when importing PDFs for this account. Leave blank to clear.
+                </p>
+                <div className="flex items-center gap-2">
+                  <div className="relative flex-1">
+                    <input
+                      type={pwdShow ? 'text' : 'password'}
+                      value={pwdValue}
+                      onChange={e => setPwdValue(e.target.value)}
+                      placeholder="Enter PDF password"
+                      className="w-full border border-amber-300 rounded-lg px-3 py-1.5 pr-9 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400 bg-white"
+                    />
+                    <button type="button" onClick={() => setPwdShow(v => !v)}
+                      className="absolute right-2.5 top-1/2 -translate-y-1/2 text-amber-400 hover:text-amber-600">
+                      {pwdShow ? <EyeOff size={14} /> : <Eye size={14} />}
+                    </button>
+                  </div>
+                  <Button size="sm" onClick={handleSavePwd} loading={pwdSaving}>Save</Button>
+                  <Button variant="ghost" size="sm" onClick={() => setPwdEditId(null)}>Cancel</Button>
+                </div>
+                {pwdError && <p className="text-xs text-red-600">{pwdError}</p>}
+              </div>
+            </div>
+          )}
+
           <div className="overflow-x-auto">
             <table className="w-full text-sm whitespace-nowrap">
               <thead>
@@ -329,6 +554,13 @@ export default function BankStatements() {
                     <td className="px-5 py-3">
                       {canWrite && (
                         <div className="flex items-center gap-1">
+                          <button
+                            onClick={() => openPwdEdit(a)}
+                            title={a.pdf_password ? 'PDF password set — click to change' : 'Set PDF password'}
+                            className={`p-1.5 rounded hover:bg-gray-100 transition-colors ${a.pdf_password ? 'text-amber-500 hover:text-amber-600' : 'text-gray-300 hover:text-gray-500'}`}
+                          >
+                            {a.pdf_password ? <Lock size={13} /> : <Unlock size={13} />}
+                          </button>
                           <button onClick={() => openEdit(a)} className="p-1.5 rounded hover:bg-gray-100 text-gray-400 hover:text-gray-700">
                             <Pencil size={13} />
                           </button>
@@ -348,7 +580,7 @@ export default function BankStatements() {
                   </tr>
                 ))}
                 {displayedAccounts.length === 0 && !loading && (
-                  <tr><td colSpan={7} className="px-6 py-8 text-center text-gray-400">
+                  <tr><td colSpan={8} className="px-6 py-8 text-center text-gray-400">
                     {hasFilters ? 'No accounts match the selected filters' : 'No accounts registered yet'}
                   </td></tr>
                 )}

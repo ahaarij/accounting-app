@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { useParams, useNavigate, useLocation } from 'react-router-dom';
-import { Layout, PageHeader, Breadcrumb } from '../components/Layout';
+import { Layout, PageHeader } from '../components/Layout';
 import { Card, CardHeader, CardBody } from '../components/ui/card';
 import { Badge } from '../components/ui/badge';
 import { Button } from '../components/ui/button';
@@ -84,7 +84,6 @@ export default function AccountDetail() {
 
   return (
     <Layout>
-      <Breadcrumb items={[{ label: 'Dashboard', to: '/' }, { label: name }]} />
       <PageHeader
         title={name}
         subtitle={[account.bank_name, account.currency && `(${account.currency})`, code && `· ${code}`].filter(Boolean).join(' ') || undefined}

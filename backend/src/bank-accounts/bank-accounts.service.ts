@@ -39,7 +39,8 @@ export class BankAccountsService {
           0
         ) AS closing_balance,
         COALESCE(lb.opening_balance, 0) AS opening_balance,
-        COALESCE(rr.date, lb.date) AS balance_date
+        COALESCE(rr.date, lb.date) AS balance_date,
+        lt.last_transaction_date
       FROM bank_accounts ba
       JOIN companies c ON c.id = ba.company_id
       LEFT JOIN LATERAL (
@@ -56,6 +57,11 @@ export class BankAccountsService {
         ORDER BY date DESC
         LIMIT 1
       ) lb ON true
+      LEFT JOIN LATERAL (
+        SELECT MAX(date) AS last_transaction_date
+        FROM account_transactions
+        WHERE bank_account_id = ba.id
+      ) lt ON true
       ORDER BY
         CASE WHEN COALESCE(rr.expected_closing_balance, lb.closing_balance, 0) = 0 THEN 1 ELSE 0 END,
         COALESCE(rr.expected_closing_balance, lb.closing_balance) DESC NULLS LAST

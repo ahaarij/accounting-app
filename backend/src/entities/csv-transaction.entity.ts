@@ -31,6 +31,9 @@ export class CsvTransaction {
   @Column({ type: 'numeric', precision: 15, scale: 2, nullable: true })
   balance: number;
 
+  @Column({ type: 'varchar', length: 50, default: 'manual' })
+  source: string;
+
   @CreateDateColumn()
   created_at: Date;
 }

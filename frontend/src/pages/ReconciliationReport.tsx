@@ -4,8 +4,8 @@ import { Layout, PageHeader } from '../components/Layout';
 import { Card, CardHeader } from '../components/ui/card';
 import { Badge } from '../components/ui/badge';
 import { Button } from '../components/ui/button';
-import { getResults, getSummary } from '../api';
-import { Download, Calendar, ExternalLink, Search, ArrowUpDown } from 'lucide-react';
+import { getResults, getSummary, deleteReconResult, API_BASE } from '../api';
+import { Download, Calendar, ExternalLink, Search, ArrowUpDown, Trash2 } from 'lucide-react';
 import { fmtDate } from '../utils/format';
 
 function fmtNum(v: any) {
@@ -87,6 +87,12 @@ export default function ReconciliationReport() {
   const hasFilters = search || filterCompany || filterBank || filterCurrency || filterGroup;
   const clearFilters = () => { setSearch(''); setFilterCompany(''); setFilterBank(''); setFilterCurrency(''); setFilterGroup(''); };
 
+  const handleDelete = async (r: any) => {
+    if (!confirm(`Delete reconciliation result for "${r.account_name ?? 'this account'}" on ${fmtDate(r.date)}?\n\nThis cannot be undone.`)) return;
+    await deleteReconResult(r.id);
+    setResults(prev => prev.filter(x => x.id !== r.id));
+  };
+
   const goToAccount = (r: any) => {
     if (!r.bank_account_id) return;
     const isDisc = r.status !== 'matched' && r.status !== 'pass';
@@ -106,7 +112,7 @@ export default function ReconciliationReport() {
         title="Reconciliation Report"
         subtitle="10-check engine results with expected vs actual detail"
         action={
-          <a href={`http://localhost:3000/reconciliation/report/${date || 'latest'}/pdf`} target="_blank" rel="noreferrer"
+          <a href={`${API_BASE}/reconciliation/report/${date || 'latest'}/pdf`} target="_blank" rel="noreferrer"
             className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors">
             <Download size={14} /> Export PDF
           </a>
@@ -196,6 +202,7 @@ export default function ReconciliationReport() {
                     <th key={h} className="px-5 py-3 text-xs font-medium text-gray-500 text-right">{h}</th>
                   ))}
                   <th className="px-5 py-3 text-xs font-medium text-gray-500">Notes</th>
+                  <th className="px-3 py-3" />
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-100">
@@ -231,6 +238,15 @@ export default function ReconciliationReport() {
                       </td>
                       <td className="px-5 py-3 text-gray-500 max-w-xs">
                         <span className="block truncate" title={r.notes}>{r.notes || '—'}</span>
+                      </td>
+                      <td className="px-3 py-3">
+                        <button
+                          onClick={() => handleDelete(r)}
+                          className="text-gray-300 hover:text-red-500 transition-colors"
+                          title="Delete this result"
+                        >
+                          <Trash2 size={14} />
+                        </button>
                       </td>
                     </tr>
                   );

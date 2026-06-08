@@ -4,6 +4,7 @@ import { Repository } from 'typeorm';
 import { CsvAccount } from '../entities/csv-account.entity';
 import { CsvTransaction } from '../entities/csv-transaction.entity';
 import { toNumber } from '../import/utils/date.util';
+import { PDFParse } from 'pdf-parse';
 
 @Injectable()
 export class BankStatementService {
@@ -54,7 +55,7 @@ export class BankStatementService {
 
   // ── CSV import ─────────────────────────────────────────────────────────────
 
-  async importCSV(buffer: Buffer, filename: string): Promise<{
+  async importCSV(buffer: Buffer, filename: string, source = 'manual'): Promise<{
     account_number: string;
     company_name: string;
     imported: number;
@@ -80,6 +81,7 @@ export class BankStatementService {
         company_name:   companyName,
         bank_name:      bankName,
         currency,
+        source,
         iban:   sibMeta.iban   || undefined,
         branch: sibMeta.branch || undefined,
       }));
@@ -89,7 +91,11 @@ export class BankStatementService {
       await this.accountRepo.save(csvAccount);
     }
 
-    const transactions = this.parseGenericCSV(lines);
+    let transactions = this.parseGenericCSV(lines);
+    if (transactions.length === 0) {
+      // Fallback: try headerless SIB format (date,desc,ref,debit,credit,balance)
+      transactions = this.parseSIBTransactions(lines);
+    }
     if (transactions.length === 0) {
       throw new BadRequestException(
         `Could not find any transaction rows in this file. ` +
@@ -118,11 +124,300 @@ export class BankStatementService {
         debit: tx.debit,
         credit: tx.credit,
         balance: tx.balance,
+        source,
       }));
       imported++;
     }
 
     return { account_number: csvAccount.account_number, company_name: csvAccount.company_name, imported, skipped };
+  }
+
+  // ── PDF password management ───────────────────────────────────────────────
+
+  async setPdfPassword(id: number, password: string): Promise<CsvAccount> {
+    const account = await this.accountRepo.findOne({ where: { id } });
+    if (!account) throw new NotFoundException(`Account #${id} not found`);
+    account.pdf_password = password || null;
+    return this.accountRepo.save(account);
+  }
+
+  // ── PDF preview (text extraction only, no DB write) ──────────────────────
+
+  async previewPDF(buffer: Buffer, passwordOverride?: string): Promise<{
+    pages: number;
+    text: string;
+    lines: number;
+    tables: Array<{ page: number; rows: string[][] }>;
+  }> {
+    const opts = (pwd?: string) => ({ data: buffer, ...(pwd ? { password: pwd } : {}) });
+
+    const decrypt = async (pwd?: string) => {
+      const parser = new PDFParse(opts(pwd));
+      const [textResult, tableResult] = await Promise.all([
+        parser.getText(),
+        new PDFParse(opts(pwd)).getTable(),
+      ]);
+      return { textResult, tableResult };
+    };
+
+    let textResult: any;
+    let tableResult: any;
+    try {
+      ({ textResult, tableResult } = await decrypt());
+    } catch (e: any) {
+      const isPasswordError = e?.name === 'PasswordException' || /password/i.test(e?.message ?? '');
+      if (!isPasswordError) throw new BadRequestException(`Failed to read PDF: ${e?.message ?? 'unknown error'}`);
+      if (!passwordOverride) throw new BadRequestException('This PDF is password-protected. Enter the password in the field above.');
+      try {
+        ({ textResult, tableResult } = await decrypt(passwordOverride));
+      } catch {
+        throw new BadRequestException('Incorrect password — could not decrypt this PDF.');
+      }
+    }
+
+    // Flatten table structure: [{ page, rows: string[][] }]
+    const tables: Array<{ page: number; rows: string[][] }> = [];
+    for (const pg of (tableResult?.pages ?? [])) {
+      for (const tbl of (pg.tables ?? [])) {
+        if (tbl.length > 0) tables.push({ page: pg.num, rows: tbl });
+      }
+    }
+
+    const text = textResult.text;
+    return {
+      pages: (textResult as any).total ?? 1,
+      text,
+      lines: text.split('\n').filter((l: string) => l.trim()).length,
+      tables,
+    };
+  }
+
+  // ── PDF import ─────────────────────────────────────────────────────────────
+
+  async importPDF(buffer: Buffer, filename: string, accountId?: number, passwordOverride?: string, source = 'pdf'): Promise<{
+    account_number: string;
+    company_name: string;
+    imported: number;
+    skipped: number;
+    pages: number;
+  }> {
+    // Resolve account — explicit ID wins, else derive from filename
+    let csvAccount: CsvAccount | null = null;
+    if (accountId) {
+      csvAccount = await this.accountRepo.findOne({ where: { id: accountId } });
+      if (!csvAccount) throw new NotFoundException(`Account #${accountId} not found`);
+    } else {
+      const fileMeta = this.extractAccountFromFilename(filename.replace(/\.pdf$/i, '.csv'));
+      csvAccount = await this.accountRepo.findOne({ where: { account_number: fileMeta.accountNumber } });
+      if (!csvAccount) {
+        // Auto-create account from filename
+        csvAccount = await this.accountRepo.save(this.accountRepo.create({
+          account_number: fileMeta.accountNumber,
+          company_name: fileMeta.companyName,
+          bank_name: fileMeta.bankName,
+          currency: fileMeta.currency,
+          source,
+        }));
+      }
+    }
+
+    // Decrypt and extract text — try without password first, fall back to stored/override password
+    let pdfText: string;
+    let numPages: number;
+
+    const tryParse = async (pwd?: string) => {
+      const parser = new PDFParse({ data: buffer, ...(pwd ? { password: pwd } : {}) });
+      const result = await parser.getText();
+      return result;
+    };
+
+    try {
+      // Attempt 1: no password (works for unprotected PDFs)
+      const result = await tryParse();
+      pdfText = result.text;
+      numPages = (result as any).total ?? 1;
+    } catch (e: any) {
+      const isPasswordError = e?.name === 'PasswordException' || /password/i.test(e?.message ?? '');
+      if (!isPasswordError) {
+        throw new BadRequestException(`Failed to read PDF: ${e?.message ?? 'unknown error'}`);
+      }
+      // Attempt 2: use stored password or override
+      const password = passwordOverride || csvAccount.pdf_password;
+      if (!password) {
+        throw new BadRequestException(
+          `This PDF is password-protected. Set a PDF password for "${csvAccount.company_name}" in the Account Registry first.`,
+        );
+      }
+      try {
+        const result = await tryParse(password);
+        pdfText = result.text;
+        numPages = (result as any).total ?? 1;
+      } catch {
+        throw new BadRequestException(
+          `Incorrect PDF password for "${csvAccount.company_name}". Update it in the Account Registry.`,
+        );
+      }
+    }
+
+    // Parse transactions from extracted text
+    const lines = pdfText.split('\n').map(l => l.trim()).filter(Boolean);
+    const transactions = this.parsePdfTransactions(lines);
+
+    if (transactions.length === 0) {
+      return {
+        account_number: csvAccount.account_number,
+        company_name: csvAccount.company_name,
+        imported: 0,
+        skipped: 0,
+        pages: numPages,
+        preview_text: pdfText.substring(0, 3000),
+        warning: 'No transaction rows detected. The extracted text is shown below so you can verify the layout.',
+      } as any;
+    }
+
+    let imported = 0;
+    let skipped = 0;
+    for (const tx of transactions) {
+      const exists = await this.txRepo.findOne({
+        where: {
+          csv_account_id: csvAccount.id,
+          date: tx.date,
+          description: tx.description,
+          debit: tx.debit,
+          credit: tx.credit,
+        },
+      });
+      if (exists) { skipped++; continue; }
+      await this.txRepo.save(this.txRepo.create({
+        csv_account_id: csvAccount.id,
+        date: tx.date,
+        description: tx.description,
+        ref: tx.ref,
+        debit: tx.debit,
+        credit: tx.credit,
+        balance: tx.balance,
+        source,
+      }));
+      imported++;
+    }
+
+    return {
+      account_number: csvAccount.account_number,
+      company_name: csvAccount.company_name,
+      imported,
+      skipped,
+      pages: numPages,
+    };
+  }
+
+  // Parse transactions from PDF text lines (handles most common bank PDF layouts)
+  private parsePdfTransactions(lines: string[]): TxRow[] {
+    // Strategy 1: find a header row then parse columnar data
+    const DATE_HDR   = /\bdate\b/i;
+    const DESC_HDR   = /\b(description|narrative|particulars?|details?|remarks?|narration)\b/i;
+    const DEBIT_HDR  = /\b(debit|dr|withdrawal|out)\b/i;
+    const CREDIT_HDR = /\b(credit|cr|deposit|in)\b/i;
+    const BAL_HDR    = /\b(balance|bal)\b/i;
+    const REF_HDR    = /\b(ref(erence)?|chq|cheque)\b/i;
+
+    // Try to find header row
+    let headerIdx = -1;
+    for (let i = 0; i < Math.min(lines.length, 30); i++) {
+      const l = lines[i];
+      if (DATE_HDR.test(l) && (DEBIT_HDR.test(l) || CREDIT_HDR.test(l))) {
+        headerIdx = i;
+        break;
+      }
+    }
+
+    if (headerIdx >= 0) {
+      const columnar = this.parsePdfColumnar(lines, headerIdx);
+      if (columnar.length > 0) return columnar;
+      // Columnar split failed (columns not separated by 2+ spaces in extracted text) — fall through
+    }
+
+    // Strategy 2: date-anchored rows — scan for lines starting with a date
+    const transactions: TxRow[] = [];
+    const DATE_START = /^(\d{1,2}[-\/\.]\d{1,2}[-\/\.]\d{2,4}|\d{4}-\d{2}-\d{2})/;
+    const NUM_RE = /[\d,]+\.?\d*/g;
+
+    for (let i = 0; i < lines.length; i++) {
+      const l = lines[i];
+      if (!DATE_START.test(l)) continue;
+
+      const isoDate = this.parseAnyDate(l.split(/\s+/)[0]);
+      if (!isoDate) continue;
+
+      // Collect all numbers on this line (and optionally the next)
+      const restOfLine = l.replace(/^\S+\s*/, '');
+      const nums = (restOfLine.match(NUM_RE) || []).map(n => parseFloat(n.replace(/,/g, ''))).filter(n => !isNaN(n));
+
+      // Heuristic: last number is balance, second-last is debit or credit
+      let debit: number | null = null;
+      let credit: number | null = null;
+      let balance: number | null = null;
+
+      if (nums.length >= 2) {
+        balance = nums[nums.length - 1];
+        const prev = nums[nums.length - 2];
+        // If there are 3+ numbers, try debit/credit split
+        if (nums.length >= 3) {
+          debit  = nums[nums.length - 3] || null;
+          credit = nums[nums.length - 2] || null;
+        } else {
+          credit = prev;
+        }
+      }
+
+      const words = restOfLine.split(/\s+/);
+      const descWords = words.filter(w => !/^[\d,]+\.?\d*$/.test(w));
+      const description = descWords.join(' ').trim() || null;
+
+      transactions.push({ date: isoDate, description, ref: null, debit, credit, balance });
+    }
+
+    return transactions;
+  }
+
+  private parsePdfColumnar(lines: string[], headerIdx: number): TxRow[] {
+    const header = lines[headerIdx];
+    // Build rough column positions from token positions in header
+    const tokens = header.split(/\s{2,}/).map(t => t.trim()).filter(Boolean);
+
+    const DATE_COL   = tokens.findIndex(t => /\bdate\b/i.test(t));
+    const DESC_COL   = tokens.findIndex(t => /\b(description|narrative|particulars?|details?|narration)\b/i.test(t));
+    const REF_COL    = tokens.findIndex(t => /\b(ref(erence)?|chq|cheque)\b/i.test(t));
+    const DEBIT_COL  = tokens.findIndex(t => /\b(debit|dr|withdrawal)\b/i.test(t));
+    const CREDIT_COL = tokens.findIndex(t => /\b(credit|cr|deposit)\b/i.test(t));
+    const BAL_COL    = tokens.findIndex(t => /\b(balance|bal)\b/i.test(t));
+
+    const transactions: TxRow[] = [];
+
+    for (let i = headerIdx + 1; i < lines.length; i++) {
+      const cells = lines[i].split(/\s{2,}/).map(c => c.trim());
+      if (cells.length < 2) continue;
+
+      const dateStr = DATE_COL >= 0 ? cells[DATE_COL] : cells[0];
+      const isoDate = this.parseAnyDate(dateStr ?? '');
+      if (!isoDate) continue;
+
+      const rawNum = (v?: string) => {
+        if (!v) return null;
+        const n = parseFloat(v.replace(/,/g, ''));
+        return isNaN(n) ? null : n;
+      };
+
+      transactions.push({
+        date:        isoDate,
+        description: DESC_COL >= 0   ? cells[DESC_COL]   || null : null,
+        ref:         REF_COL >= 0    ? cells[REF_COL]    || null : null,
+        debit:       DEBIT_COL >= 0  ? rawNum(cells[DEBIT_COL])  : null,
+        credit:      CREDIT_COL >= 0 ? rawNum(cells[CREDIT_COL]) : null,
+        balance:     BAL_COL >= 0    ? rawNum(cells[BAL_COL])    : null,
+      });
+    }
+
+    return transactions;
   }
 
   // ── Transactions ──────────────────────────────────────────────────────────

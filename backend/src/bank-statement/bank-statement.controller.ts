@@ -31,14 +31,14 @@ export class BankStatementController {
 
   @Post('accounts')
   @UseGuards(RolesGuard)
-  @Roles('admin', 'accountant')
+  @Roles('super_admin', 'admin', 'developer')
   createAccount(@Body() dto: { account_number: string; company_name: string; currency: string; bank_name: string }) {
     return this.svc.createAccount(dto);
   }
 
   @Patch('accounts/:id')
   @UseGuards(RolesGuard)
-  @Roles('admin', 'accountant')
+  @Roles('super_admin', 'admin', 'developer')
   updateAccount(
     @Param('id', ParseIntPipe) id: number,
     @Body() dto: Partial<{ account_number: string; company_name: string; currency: string; bank_name: string }>,
@@ -48,7 +48,7 @@ export class BankStatementController {
 
   @Delete('accounts/:id')
   @UseGuards(RolesGuard)
-  @Roles('admin', 'accountant')
+  @Roles('super_admin', 'admin', 'developer')
   deleteAccount(@Param('id', ParseIntPipe) id: number) {
     return this.svc.deleteAccount(id);
   }
@@ -57,11 +57,57 @@ export class BankStatementController {
 
   @Post('import')
   @UseGuards(RolesGuard)
-  @Roles('admin', 'accountant')
+  @Roles('super_admin', 'admin', 'developer')
   @UseInterceptors(FileInterceptor('file', { storage: memoryStorage() }))
   importCSV(@UploadedFile() file: Express.Multer.File) {
     if (!file) throw new BadRequestException('No file uploaded');
     return this.svc.importCSV(file.buffer, file.originalname);
+  }
+
+  // ── PDF import ────────────────────────────────────────────────────────────────
+
+  @Post('import-pdf')
+  @UseGuards(RolesGuard)
+  @Roles('super_admin', 'admin', 'developer')
+  @UseInterceptors(FileInterceptor('file', { storage: memoryStorage() }))
+  importPDF(
+    @UploadedFile() file: Express.Multer.File,
+    @Body('accountId') accountId?: string,
+    @Body('password') password?: string,
+  ) {
+    if (!file) throw new BadRequestException('No file uploaded');
+    return this.svc.importPDF(
+      file.buffer,
+      file.originalname,
+      accountId ? parseInt(accountId) : undefined,
+      password || undefined,
+    );
+  }
+
+  // ── PDF preview (extract text only, no DB write) ─────────────────────────────
+
+  @Post('preview-pdf')
+  @UseGuards(RolesGuard)
+  @Roles('super_admin', 'admin', 'developer')
+  @UseInterceptors(FileInterceptor('file', { storage: memoryStorage() }))
+  previewPDF(
+    @UploadedFile() file: Express.Multer.File,
+    @Body('password') password?: string,
+  ) {
+    if (!file) throw new BadRequestException('No file uploaded');
+    return this.svc.previewPDF(file.buffer, password || undefined);
+  }
+
+  // ── PDF password ──────────────────────────────────────────────────────────────
+
+  @Patch('accounts/:id/pdf-password')
+  @UseGuards(RolesGuard)
+  @Roles('super_admin', 'admin', 'developer')
+  setPdfPassword(
+    @Param('id', ParseIntPipe) id: number,
+    @Body('password') password: string,
+  ) {
+    return this.svc.setPdfPassword(id, password ?? '');
   }
 
   // ── Company view ─────────────────────────────────────────────────────────

@@ -66,6 +66,27 @@ export default function Dashboard() {
     [accounts],
   );
 
+  const cutoff = useMemo(() => {
+    const d = new Date();
+    d.setDate(d.getDate() - 90);
+    return d;
+  }, []);
+
+  const isActive = (acc: any) => {
+    if (!acc.last_transaction_date) return false;
+    return new Date(acc.last_transaction_date) >= cutoff;
+  };
+
+  const groupStats = useMemo(() => {
+    const pos = (active: boolean, ccy: string) =>
+      accounts.filter(a => isActive(a) === active && a.currency === ccy && Number(a.closing_balance) > 0)
+               .reduce((s, a) => s + Number(a.closing_balance), 0);
+    return {
+      aAed: pos(true,  'AED'), aUsd: pos(true,  'USD'), aCount: accounts.filter(a => isActive(a)).length,
+      bAed: pos(false, 'AED'), bUsd: pos(false, 'USD'), bCount: accounts.filter(a => !isActive(a)).length,
+    };
+  }, [accounts, cutoff]);
+
   const byBank = useMemo(() => {
     const groups: Record<string, { bank_name: string; currency: string; group: string; total: number; count: number }> = {};
     accounts.forEach(acc => {
@@ -154,7 +175,37 @@ export default function Dashboard() {
           ))}
         </div>
 
-        {/* 7-day net position chart */}
+        {/* Group A / Group B summary */}
+        <div className="grid grid-cols-2 gap-4">
+          {[
+            { type: 'active',  group: 'A', label: 'Active Accounts | Bank Closing Balance',  aed: groupStats.aAed, usd: groupStats.aUsd, count: groupStats.aCount, bg: 'bg-indigo-50', badge: 'bg-indigo-100 text-indigo-700' },
+            { type: 'passive', group: 'B', label: 'Passive Accounts | Bank Closing Balance', aed: groupStats.bAed, usd: groupStats.bUsd, count: groupStats.bCount, bg: 'bg-orange-50', badge: 'bg-orange-100 text-orange-700' },
+          ].map(({ type, group, label, aed, usd, count, bg, badge }) => (
+            <div key={group} onClick={() => navigate(`/account-group/${type}`)} className="cursor-pointer">
+            <Card>
+              <CardBody className={`rounded-xl ${bg}`}>
+                <div className="flex items-center gap-2 mb-3">
+                  <span className={`text-xs font-bold px-1.5 py-0.5 rounded ${badge}`}>{group}</span>
+                  <p className="text-sm font-semibold text-gray-800">{label}</p>
+                  <span className="text-xs text-gray-400 ml-auto">{count} accounts</span>
+                </div>
+                <div className="flex gap-8">
+                  <div>
+                    <p className="text-[11px] text-gray-700 mb-0.5">AED Total</p>
+                    <p className="text-lg font-bold font-mono text-emerald-600">{fmt(aed)}</p>
+                  </div>
+                  <div>
+                    <p className="text-[11px] text-gray-700 mb-0.5">USD Total</p>
+                    <p className="text-lg font-bold font-mono text-blue-600">{fmt(usd)}</p>
+                  </div>
+                </div>
+              </CardBody>
+            </Card>
+            </div>
+          ))}
+        </div>
+
+        {/* Net position chart */}
         <Card>
           <CardHeader>
             <div className="flex items-center justify-between">
@@ -237,10 +288,10 @@ export default function Dashboard() {
                     className="flex items-center justify-between w-full px-6 py-3 hover:bg-gray-50 text-left transition-colors">
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center gap-1.5">
-                        <p className="text-sm font-medium text-gray-800 truncate">{acc.account_name}</p>
+                        <p className="text-sm font-semibold text-gray-900 truncate">{acc.account_name}</p>
                         {acc.group && <GroupBadge group={acc.group} />}
                       </div>
-                      <p className="text-xs text-gray-400">
+                      <p className="text-xs text-gray-600">
                         {[acc.bank_name, acc.currency && `(${acc.currency})`].filter(Boolean).join(' ') || acc.account_code || '—'}
                       </p>
                     </div>

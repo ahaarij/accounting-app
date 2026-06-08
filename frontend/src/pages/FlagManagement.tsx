@@ -16,7 +16,7 @@ const FLAG_DESTINATIONS: Record<string, string> = {
 };
 
 export default function FlagManagement() {
-  const { isViewer } = useAuth();
+  const { canEdit } = useAuth();
   const navigate = useNavigate();
   const [flags, setFlags] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
@@ -114,7 +114,7 @@ export default function FlagManagement() {
                             </button>
                           )}
                         </div>
-                        {!isViewer && !flag.resolved && (
+                        {canEdit && !flag.resolved && (
                           <div className="flex items-center gap-2 shrink-0">
                             <input type="text" placeholder="Notes (optional)"
                               value={notes[flag.id] ?? ''}

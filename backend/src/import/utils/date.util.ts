@@ -13,6 +13,14 @@ export function normalizeDate(raw: any): string | null {
   const s = String(raw).trim();
   if (!s) return null;
 
+  // Numeric string that looks like an Excel serial (e.g. "45781")
+  if (/^\d+$/.test(s)) {
+    const n = parseInt(s, 10);
+    const date = excelSerialToDate(n);
+    if (date) return formatDate(date);
+    return null;
+  }
+
   // Already ISO
   if (/^\d{4}-\d{2}-\d{2}/.test(s)) {
     const iso = s.substring(0, 10);

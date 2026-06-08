@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
+import { ScheduleModule } from '@nestjs/schedule';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { ImportModule } from './import/import.module';
@@ -9,6 +10,10 @@ import { BankAccountsModule } from './bank-accounts/bank-accounts.module';
 import { UsersModule } from './users/users.module';
 import { BankStatementModule } from './bank-statement/bank-statement.module';
 import { SalesModule } from './sales/sales.module';
+import { EmailMonitorModule } from './email-monitor/email-monitor.module';
+import { CashModule } from './cash/cash.module';
+import { CompaniesModule } from './companies/companies.module';
+import { CashDepositsModule } from './cash-deposits/cash-deposits.module';
 
 @Module({
   imports: [
@@ -25,6 +30,7 @@ import { SalesModule } from './sales/sales.module';
       synchronize: false,
       logging: false,
     }),
+    ScheduleModule.forRoot(),
     ImportModule,
     ReconciliationModule,
     AuthModule,
@@ -32,6 +38,10 @@ import { SalesModule } from './sales/sales.module';
     UsersModule,
     BankStatementModule,
     SalesModule,
+    EmailMonitorModule,
+    CashModule,
+    CompaniesModule,
+    CashDepositsModule,
   ],
   controllers: [AppController],
   providers: [AppService],

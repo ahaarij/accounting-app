@@ -9,5 +9,6 @@ import { CsvTransaction } from '../entities/csv-transaction.entity';
   imports: [TypeOrmModule.forFeature([CsvAccount, CsvTransaction])],
   controllers: [BankStatementController],
   providers: [BankStatementService],
+  exports: [BankStatementService],
 })
 export class BankStatementModule {}

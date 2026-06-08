@@ -6,7 +6,7 @@ import { RolesGuard } from '../auth/roles.guard';
 import { Roles } from '../auth/roles.decorator';
 
 @UseGuards(JwtAuthGuard, RolesGuard)
-@Roles('admin', 'accountant')
+@Roles('super_admin', 'admin', 'developer')
 @Controller('import')
 export class ImportController {
   constructor(private readonly importService: ImportService) {}
@@ -40,7 +40,7 @@ export class ImportController {
   }
 
   @Delete('reset')
-  @Roles('admin')
+  @Roles('super_admin', 'admin')
   async resetDatabase() {
     return this.importService.resetDatabase();
   }

@@ -85,7 +85,7 @@ function SalesMultiUpload({ disabled }: { disabled: boolean }) {
 }
 
 export default function Import() {
-  const { isViewer, isAdmin } = useAuth();
+  const { canEdit, isAdmin } = useAuth();
   const [running, setRunning] = useState(false);
   const [reconResult, setReconResult] = useState<any>(null);
   const [reconError, setReconError] = useState('');
@@ -126,46 +126,47 @@ export default function Import() {
     <Layout>
       <PageHeader
         title="Import Files"
-        subtitle="Upload the 4 daily Excel files. Reconciliation runs automatically after Group A or Group B import."
       />
 
       <div className="p-8 space-y-6">
+        {false && (
         <div className="grid grid-cols-2 gap-4">
           <FileDropZone
             label="Group A Balances"
             description="55 sheets · SUMMARY + account ledgers"
             onUpload={upload('group-a')}
-            disabled={isViewer}
+            disabled={!canEdit}
           />
           <FileDropZone
             label="Group B Balances"
             description="259 sheets · 3 SUMMARY sheets merged"
             onUpload={upload('group-b')}
-            disabled={isViewer}
+            disabled={!canEdit}
           />
           <FileDropZone
             label="Daily Transactions"
             description="Date-block format · TRANSACTION ON rows"
             onUpload={upload('transactions')}
-            disabled={isViewer}
+            disabled={!canEdit}
           />
           <FileDropZone
             label="Daily Cashflow"
             description="Filename = date · Sheet1 cashflow · Sheet2 counterparty"
             onUpload={upload('cashflow')}
-            disabled={isViewer}
+            disabled={!canEdit}
           />
         </div>
+        )}
 
         <div className="border-t pt-4">
           <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1">Sales Registers</p>
           <p className="text-xs text-gray-400 mb-3">
             Drop any sales register XLS — company name is auto-detected from the file header. Works for any company.
           </p>
-          <SalesMultiUpload disabled={isViewer} />
+          <SalesMultiUpload disabled={!canEdit} />
         </div>
 
-        {!isViewer && (
+        {false && canEdit && (
           <Card>
             <CardBody className="flex items-center justify-between">
               <div>
@@ -180,7 +181,7 @@ export default function Import() {
           </Card>
         )}
 
-        {isAdmin && (
+        {false && isAdmin && (
           <Card className="border-red-200">
             <CardBody className="flex items-center justify-between">
               <div>
