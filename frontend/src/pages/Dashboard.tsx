@@ -4,7 +4,7 @@ import { Layout, PageHeader } from '../components/Layout';
 import { Card, CardHeader, CardBody } from '../components/ui/card';
 import { Badge } from '../components/ui/badge';
 import { getSummary, getFlags, getBankAccounts, getNetPosition } from '../api';
-import { LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from 'recharts';
+import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from 'recharts';
 import { AlertTriangle, CheckCircle, XCircle, ChevronRight, Landmark, Building2 } from 'lucide-react';
 import { fetchCashDeposits } from '../api/cashDeposits';
 
@@ -340,7 +340,7 @@ export default function Dashboard() {
         <Card>
           <CardHeader>
             <div className="flex items-center justify-between">
-              <p className="font-medium text-gray-900 text-sm">Net position — last 30 days</p>
+              <p className="font-medium text-gray-900 text-sm">Net position — {chartPeriod === 30 ? 'last 30 days' : 'last year'}</p>
               <div className="flex items-center gap-3">
                 <div className="flex gap-1">
                   {([30, 365] as const).map(v => (
@@ -408,7 +408,7 @@ export default function Dashboard() {
               </div>
             ) : (
               <ResponsiveContainer width="100%" height={200}>
-                <BarChart
+                <LineChart
                   data={depositChartData.labels.map((label, i) => ({ day: label, AED: depositChartData!.data[i] }))}
                   margin={{ top: 4, right: 16, left: 0, bottom: 0 }}
                 >
@@ -416,8 +416,8 @@ export default function Dashboard() {
                   <XAxis dataKey="day" tick={{ fontSize: 11 }} />
                   <YAxis tick={{ fontSize: 11 }} tickFormatter={v => v >= 1_000_000 ? `${(v / 1_000_000).toFixed(1)}M` : v >= 1_000 ? `${Math.round(v / 1_000)}K` : String(v)} width={60} />
                   <Tooltip formatter={(v) => [`AED ${Number(v).toLocaleString('en-AE', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`, 'Deposited']} />
-                  <Bar dataKey="AED" fill="#059669" radius={[3, 3, 0, 0]} />
-                </BarChart>
+                  <Line type="monotone" dataKey="AED" stroke="#059669" strokeWidth={2} dot={{ r: 3 }} activeDot={{ r: 5 }} />
+                </LineChart>
               </ResponsiveContainer>
             )}
           </CardBody>
