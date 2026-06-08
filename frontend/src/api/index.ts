@@ -133,6 +133,7 @@ export const getRecentEmailImports = () => api.get('/email-monitor/recent');
 export const clearEmailImportLog = () => api.delete('/email-monitor/recent');
 
 export const deleteReconResult = (id: number) => api.delete(`/reconciliation/results/${id}`);
+export const clearReconData = () => api.delete('/reconciliation/clear-all');
 
 // Cash ledger
 export const getCashEntries = (currency?: string, startDate?: string, endDate?: string) =>

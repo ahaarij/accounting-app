@@ -3,7 +3,7 @@ import { Layout, PageHeader } from '../components/Layout';
 import { FileDropZone } from '../components/FileDropZone';
 import { Button } from '../components/ui/button';
 import { Card, CardBody } from '../components/ui/card';
-import { importFile, runReconciliation, resetDatabase, importSalesRegister } from '../api';
+import { importFile, runReconciliation, resetDatabase, importSalesRegister, clearReconData } from '../api';
 import { useAuth } from '../auth/AuthContext';
 import { RefreshCw, CheckCircle, Trash2 } from 'lucide-react';
 
@@ -91,6 +91,8 @@ export default function Import() {
   const [reconError, setReconError] = useState('');
   const [resetting, setResetting] = useState(false);
   const [confirmReset, setConfirmReset] = useState(false);
+  const [clearingRecon, setClearingRecon] = useState(false);
+  const [confirmClearRecon, setConfirmClearRecon] = useState(false);
 
   const upload = (route: string) => async (file: File) => {
     await importFile(route, file);
@@ -175,6 +177,36 @@ export default function Import() {
                 <RefreshCw size={14} />
                 Run Reconciliation
               </Button>
+            </CardBody>
+          </Card>
+        )}
+
+        {canEdit && (
+          <Card className="border-orange-200">
+            <CardBody className="flex items-center justify-between">
+              <div>
+                <p className="font-medium text-orange-700 text-sm">Clear Reconciliation Data</p>
+                <p className="text-xs text-gray-500 mt-0.5">Wipe all reconciliation results and flags only — imports and company data untouched</p>
+              </div>
+              {confirmClearRecon ? (
+                <div className="flex items-center gap-2">
+                  <span className="text-xs text-orange-600 font-medium">Are you sure?</span>
+                  <Button
+                    onClick={async () => { setClearingRecon(true); try { await clearReconData(); setConfirmClearRecon(false); } finally { setClearingRecon(false); } }}
+                    loading={clearingRecon}
+                    variant="danger"
+                    size="sm"
+                  >
+                    Yes, clear it
+                  </Button>
+                  <Button onClick={() => setConfirmClearRecon(false)} variant="ghost" size="sm">Cancel</Button>
+                </div>
+              ) : (
+                <Button onClick={() => setConfirmClearRecon(true)} variant="danger" size="sm">
+                  <Trash2 size={14} />
+                  Clear Recon Data
+                </Button>
+              )}
             </CardBody>
           </Card>
         )}

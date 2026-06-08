@@ -581,6 +581,12 @@ export class ReconciliationService {
     return { deleted: id };
   }
 
+  async clearAll() {
+    await this.flagRepo.query(`TRUNCATE TABLE reconciliation_flags RESTART IDENTITY CASCADE`);
+    await this.resultRepo.query(`TRUNCATE TABLE reconciliation_results RESTART IDENTITY CASCADE`);
+    return { cleared: true };
+  }
+
   async getFlags(date?: string, resolved?: boolean) {
     let sql = `
       SELECT

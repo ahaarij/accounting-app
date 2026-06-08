@@ -42,6 +42,12 @@ export class ReconciliationController {
     return this.reconciliationService.getFlags(date, resolvedBool);
   }
 
+  @Delete('clear-all')
+  @Roles('super_admin', 'admin', 'developer')
+  async clearAll() {
+    return this.reconciliationService.clearAll();
+  }
+
   @Delete('results/:id')
   @Roles('super_admin', 'admin', 'developer')
   async deleteResult(@Param('id') id: string) {
