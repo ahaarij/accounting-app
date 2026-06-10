@@ -706,6 +706,14 @@ export default function CashDepositsTracker() {
   const [depositModal, setDepositModal] = useState<{ company: CompanyRow; deposit: Deposit | null } | null>(null);
   const [limitsModal, setLimitsModal] = useState<LimitsTarget | null>(null);
   const [showPlanner, setShowPlanner] = useState(false);
+  const [sortCol, setSortCol] = useState<'company' | 'last_tx' | 'limits' | 'total' | null>(null);
+  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
+
+  function handleSort(col: 'company' | 'last_tx' | 'limits' | 'total') {
+    if (sortCol === col && sortDir === 'asc') { setSortCol(null); }
+    else if (sortCol === col) { setSortDir('asc'); }
+    else { setSortCol(col); setSortDir('desc'); }
+  }
 
   const { from: effectiveFrom, to: effectiveTo } = useMemo(
     () => getEffectiveDates(dateMode, fromMonth, toMonth),
@@ -724,7 +732,25 @@ export default function CashDepositsTracker() {
   useEffect(() => { load(); }, [effectiveFrom, effectiveTo]); // eslint-disable-line
 
   const companyGroups = useMemo(() => buildCompanyGroups(rows), [rows]);
-  const sortedGroups = useMemo(() => sortGroups(companyGroups, catFilter), [companyGroups, catFilter]);
+  const sortedGroups = useMemo(() => {
+    const base = sortGroups(companyGroups, catFilter);
+    if (!sortCol) return base;
+    const dir = sortDir === 'asc' ? 1 : -1;
+    return [...base].sort((a, b) => {
+      switch (sortCol) {
+        case 'company': return dir * a.company_name.localeCompare(b.company_name);
+        case 'last_tx': {
+          if (!a.last_transaction_date && !b.last_transaction_date) return 0;
+          if (!a.last_transaction_date) return dir;
+          if (!b.last_transaction_date) return -dir;
+          return dir * a.last_transaction_date.localeCompare(b.last_transaction_date);
+        }
+        case 'limits': return dir * (a.monthly_limit - b.monthly_limit);
+        case 'total': return dir * (a.total_deposits - b.total_deposits);
+        default: return 0;
+      }
+    });
+  }, [companyGroups, catFilter, sortCol, sortDir]);
 
   const stats = useMemo(() => ({
     total: companyGroups.reduce((s, g) => s + g.total_deposits, 0),
@@ -1030,10 +1056,30 @@ export default function CashDepositsTracker() {
                   <tr className="bg-gray-50/60">
                     <th className="w-10 pl-3.5 py-3.5" />
                     <th className="px-3 py-3.5 text-left text-xs font-semibold text-gray-400 uppercase tracking-wider w-14">Cat</th>
-                    <th className="px-4 py-3.5 text-left text-xs font-semibold text-gray-400 uppercase tracking-wider">Company</th>
-                    <th className="px-4 py-3.5 text-left text-xs font-semibold text-gray-400 uppercase tracking-wider w-44">Last Transaction</th>
-                    <th className="px-4 py-3.5 text-left text-xs font-semibold text-gray-400 uppercase tracking-wider w-36">Limits</th>
-                    <th className="px-4 py-3.5 text-right text-xs font-semibold text-gray-400 uppercase tracking-wider w-52">Company Total (AED)</th>
+                    <th className="px-4 py-3.5 text-left w-auto">
+                      <button onClick={() => handleSort('company')} className="flex items-center gap-1 text-xs font-semibold text-gray-400 uppercase tracking-wider hover:text-gray-600 transition-colors">
+                        Company
+                        {sortCol === 'company' ? (sortDir === 'asc' ? <ChevronUp size={12} className="text-blue-500" /> : <ChevronDown size={12} className="text-blue-500" />) : <span className="w-3 h-3 inline-block" />}
+                      </button>
+                    </th>
+                    <th className="px-4 py-3.5 text-left w-44">
+                      <button onClick={() => handleSort('last_tx')} className="flex items-center gap-1 text-xs font-semibold text-gray-400 uppercase tracking-wider hover:text-gray-600 transition-colors">
+                        Last Transaction
+                        {sortCol === 'last_tx' ? (sortDir === 'asc' ? <ChevronUp size={12} className="text-blue-500" /> : <ChevronDown size={12} className="text-blue-500" />) : <span className="w-3 h-3 inline-block" />}
+                      </button>
+                    </th>
+                    <th className="px-4 py-3.5 text-left w-36">
+                      <button onClick={() => handleSort('limits')} className="flex items-center gap-1 text-xs font-semibold text-gray-400 uppercase tracking-wider hover:text-gray-600 transition-colors">
+                        Limits
+                        {sortCol === 'limits' ? (sortDir === 'asc' ? <ChevronUp size={12} className="text-blue-500" /> : <ChevronDown size={12} className="text-blue-500" />) : <span className="w-3 h-3 inline-block" />}
+                      </button>
+                    </th>
+                    <th className="px-4 py-3.5 text-right w-52">
+                      <button onClick={() => handleSort('total')} className="flex items-center gap-1 text-xs font-semibold text-gray-400 uppercase tracking-wider hover:text-gray-600 transition-colors ml-auto">
+                        Company Total (AED)
+                        {sortCol === 'total' ? (sortDir === 'asc' ? <ChevronUp size={12} className="text-blue-500" /> : <ChevronDown size={12} className="text-blue-500" />) : <span className="w-3 h-3 inline-block" />}
+                      </button>
+                    </th>
                     {canEdit && <th className="w-20 px-4 py-3.5" />}
                   </tr>
                 </thead>
