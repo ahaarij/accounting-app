@@ -7,6 +7,7 @@ import {
   API_BASE,
 } from '../api';
 import { Building2, Plus, Search, Pencil, Trash2, X } from 'lucide-react';
+import { COUNTRIES } from '../lib/countries';
 
 interface CompanyProfile {
   id: number;
@@ -75,6 +76,7 @@ export default function CompanyProfiles() {
   const [form, setForm] = useState({ ...EMPTY_FORM });
   const [saving, setSaving] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<CompanyProfile | null>(null);
+  const [emailList, setEmailList] = useState<string[]>(['']);
 
   const load = () => {
     setLoading(true);
@@ -86,6 +88,7 @@ export default function CompanyProfiles() {
   const openAdd = () => {
     setEditing(null);
     setForm({ ...EMPTY_FORM });
+    setEmailList(['']);
     setShowModal(true);
   };
 
@@ -105,6 +108,8 @@ export default function CompanyProfiles() {
       contact_emails: p.contact_emails ?? '',
       contact_phone: p.contact_phone ?? '',
     });
+    const emails = p.contact_emails ? p.contact_emails.split(',').map(e => e.trim()).filter(Boolean) : [];
+    setEmailList(emails.length > 0 ? emails : ['']);
     setShowModal(true);
   };
 
@@ -122,7 +127,7 @@ export default function CompanyProfiles() {
         personal_active_accounts: form.personal_active_accounts.trim() || undefined,
         country: form.country.trim() || undefined,
         is_active: form.is_active,
-        contact_emails: form.contact_emails.trim() || undefined,
+        contact_emails: emailList.filter(e => e.trim()).join(',') || undefined,
         contact_phone: form.contact_phone.trim() || undefined,
       };
       if (editing) {
@@ -381,12 +386,14 @@ export default function CompanyProfiles() {
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <label className="block text-xs font-medium text-gray-600 mb-1">Country</label>
-                  <input
+                  <select
                     value={form.country}
                     onChange={e => setForm(f => ({ ...f, country: e.target.value }))}
                     className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
-                    placeholder="e.g. UAE, Hong Kong"
-                  />
+                  >
+                    <option value="">— Select country —</option>
+                    {COUNTRIES.map(c => <option key={c} value={c}>{c}</option>)}
+                  </select>
                 </div>
                 <div>
                   <label className="block text-xs font-medium text-gray-600 mb-1">Contact Phone</label>
@@ -399,13 +406,32 @@ export default function CompanyProfiles() {
                 </div>
               </div>
               <div>
-                <label className="block text-xs font-medium text-gray-600 mb-1">Email Addresses (comma separated)</label>
-                <input
-                  value={form.contact_emails}
-                  onChange={e => setForm(f => ({ ...f, contact_emails: e.target.value }))}
-                  className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  placeholder="info@company.com, accounts@company.com"
-                />
+                <div className="flex items-center justify-between mb-1">
+                  <label className="text-xs font-medium text-gray-600">Email Addresses</label>
+                  <button type="button" onClick={() => setEmailList(l => [...l, ''])}
+                    className="text-xs text-blue-600 hover:text-blue-700 flex items-center gap-1">
+                    <Plus size={11} /> Add email
+                  </button>
+                </div>
+                <div className="space-y-2">
+                  {emailList.map((email, i) => (
+                    <div key={i} className="flex gap-2">
+                      <input
+                        value={email}
+                        onChange={e => setEmailList(l => l.map((v, j) => j === i ? e.target.value : v))}
+                        className="flex-1 text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                        placeholder="email@company.com"
+                        type="email"
+                      />
+                      {emailList.length > 1 && (
+                        <button type="button" onClick={() => setEmailList(l => l.filter((_, j) => j !== i))}
+                          className="p-2 text-gray-400 hover:text-red-500 rounded-lg hover:bg-red-50">
+                          <X size={14} />
+                        </button>
+                      )}
+                    </div>
+                  ))}
+                </div>
               </div>
               <div className="flex items-center gap-3">
                 <label className="text-xs font-medium text-gray-600">Status</label>

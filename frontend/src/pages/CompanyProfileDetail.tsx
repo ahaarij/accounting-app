@@ -7,6 +7,7 @@ import {
   createBuyerSupplier, addCompanyLink, removeCompanyLink,
   updateBuyerSupplier, deleteBuyerSupplier, API_BASE,
 } from '../api';
+import { COUNTRIES } from '../lib/countries';
 import {
   ArrowLeft, Pencil, X, Plus, Trash2, Link2, Building2,
   MapPin, TrendingUp, Landmark, User, Globe, Phone, Mail,
@@ -78,6 +79,7 @@ export default function CompanyProfileDetail() {
   const [editMode, setEditMode] = useState(false);
   const [editForm, setEditForm] = useState<any>({});
   const [saving, setSaving] = useState(false);
+  const [emailList, setEmailList] = useState<string[]>(['']);
 
   // Add party modal
   const [partyModal, setPartyModal] = useState<'buyer' | 'supplier' | null>(null);
@@ -121,6 +123,8 @@ export default function CompanyProfileDetail() {
       contact_emails: profile.contact_emails ?? '',
       contact_phone: profile.contact_phone ?? '',
     });
+    const emails = profile.contact_emails ? profile.contact_emails.split(',').map(e => e.trim()).filter(Boolean) : [];
+    setEmailList(emails.length > 0 ? emails : ['']);
     setEditMode(true);
   };
 
@@ -138,7 +142,7 @@ export default function CompanyProfileDetail() {
         personal_active_accounts: editForm.personal_active_accounts || undefined,
         country: editForm.country || undefined,
         is_active: editForm.is_active,
-        contact_emails: editForm.contact_emails || undefined,
+        contact_emails: emailList.filter(e => e.trim()).join(',') || undefined,
         contact_phone: editForm.contact_phone || undefined,
       });
       setEditMode(false);
@@ -433,7 +437,7 @@ export default function CompanyProfileDetail() {
               <div className="flex items-start gap-3">
                 <User size={16} className="text-gray-400 mt-0.5 shrink-0" />
                 <div className="flex-1">
-                  <p className="text-xs text-gray-400 mb-2">Personal Active Accounts (Owner)</p>
+                  <p className="text-xs text-gray-400 mb-2">Personal Accounts (Owner)</p>
                   <AccountPills raw={profile.personal_active_accounts} />
                 </div>
               </div>
@@ -513,7 +517,7 @@ export default function CompanyProfileDetail() {
                   className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500" />
               </div>
               <div>
-                <label className="block text-xs font-medium text-gray-600 mb-1">Personal Active Accounts</label>
+                <label className="block text-xs font-medium text-gray-600 mb-1">Personal Accounts</label>
                 <input value={editForm.personal_active_accounts} onChange={e => setEditForm((f: any) => ({ ...f, personal_active_accounts: e.target.value }))}
                   placeholder="MASHREQ NEO, ENBD (comma separated)"
                   className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500" />
@@ -521,9 +525,11 @@ export default function CompanyProfileDetail() {
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <label className="block text-xs font-medium text-gray-600 mb-1">Country</label>
-                  <input value={editForm.country} onChange={e => setEditForm((f: any) => ({ ...f, country: e.target.value }))}
-                    placeholder="e.g. UAE, Hong Kong"
-                    className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                  <select value={editForm.country} onChange={e => setEditForm((f: any) => ({ ...f, country: e.target.value }))}
+                    className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500">
+                    <option value="">— Select country —</option>
+                    {COUNTRIES.map(c => <option key={c} value={c}>{c}</option>)}
+                  </select>
                 </div>
                 <div>
                   <label className="block text-xs font-medium text-gray-600 mb-1">Contact Phone</label>
@@ -533,10 +539,32 @@ export default function CompanyProfileDetail() {
                 </div>
               </div>
               <div>
-                <label className="block text-xs font-medium text-gray-600 mb-1">Email Addresses (comma separated)</label>
-                <input value={editForm.contact_emails} onChange={e => setEditForm((f: any) => ({ ...f, contact_emails: e.target.value }))}
-                  placeholder="info@company.com, accounts@company.com"
-                  className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                <div className="flex items-center justify-between mb-1">
+                  <label className="text-xs font-medium text-gray-600">Email Addresses</label>
+                  <button type="button" onClick={() => setEmailList(l => [...l, ''])}
+                    className="text-xs text-blue-600 hover:text-blue-700 flex items-center gap-1">
+                    <Plus size={11} /> Add email
+                  </button>
+                </div>
+                <div className="space-y-2">
+                  {emailList.map((email, i) => (
+                    <div key={i} className="flex gap-2">
+                      <input
+                        value={email}
+                        onChange={e => setEmailList(l => l.map((v, j) => j === i ? e.target.value : v))}
+                        className="flex-1 text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                        placeholder="email@company.com"
+                        type="email"
+                      />
+                      {emailList.length > 1 && (
+                        <button type="button" onClick={() => setEmailList(l => l.filter((_, j) => j !== i))}
+                          className="p-2 text-gray-400 hover:text-red-500 rounded-lg hover:bg-red-50">
+                          <X size={14} />
+                        </button>
+                      )}
+                    </div>
+                  ))}
+                </div>
               </div>
               <div className="flex items-center gap-3">
                 <label className="text-xs font-medium text-gray-600">Status</label>
