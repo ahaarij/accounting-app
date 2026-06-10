@@ -44,7 +44,7 @@ export class CompaniesService {
     address?: string; turnover_aed?: number;
     company_active_accounts?: string; personal_active_accounts?: string;
     country?: string; is_active?: boolean;
-    contact_emails?: string; contact_phone?: string;
+    contact_emails?: string; contact_phone?: string; industry?: string;
   }) {
     const existing = await this.profileRepo.findOne({ where: { company_name: dto.company_name } });
     if (existing) throw new ConflictException('Company name already exists');
@@ -57,7 +57,7 @@ export class CompaniesService {
     address: string; turnover_aed: number;
     company_active_accounts: string; personal_active_accounts: string;
     country: string; is_active: boolean;
-    contact_emails: string; contact_phone: string;
+    contact_emails: string; contact_phone: string; industry: string;
   }>) {
     const profile = await this.profileRepo.findOne({ where: { id } });
     if (!profile) throw new NotFoundException(`Company profile ${id} not found`);

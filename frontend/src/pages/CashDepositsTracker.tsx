@@ -1,4 +1,4 @@
-import { Fragment, useState, useEffect, useMemo } from 'react';
+import { Fragment, useState, useEffect, useMemo, useRef } from 'react';
 import { Layout } from '../components/Layout';
 import {
   ChevronDown, ChevronRight, ChevronUp,
@@ -34,16 +34,30 @@ interface CompanyRow {
   monthly_limit: number;
 }
 
-type ViewMode = 'category' | 'bank' | 'owner' | 'company';
-type SortKey = 'category' | 'company_name' | 'bank_account' | 'total_deposits';
-type SortDir = 'asc' | 'desc';
+// Aggregated view of a company across all its bank accounts
+interface CompanyGroup {
+  company_id: number;
+  category: string | null;
+  company_name: string;
+  owner_name: string | null;
+  monthly_limit: number;
+  per_tx_limit: number;
+  total_deposits: number; // sum across all bank accounts
+  accounts: CompanyRow[];  // only accounts where bank_account !== null
+  last_transaction_date: string | null;
+}
 
+type ViewMode = 'category' | 'bank' | 'owner' | 'company';
+type CatFilter = 'all' | 'A' | 'B' | 'C';
+
+// VIEW_TABS kept for future use — only 'category' is rendered
 const VIEW_TABS: { mode: ViewMode; label: string }[] = [
   { mode: 'category', label: 'Category' },
   { mode: 'bank',     label: 'By Bank'  },
   { mode: 'owner',    label: 'By Owner' },
   { mode: 'company',  label: 'By Brand' },
 ];
+void VIEW_TABS; // suppress unused warning
 
 // ── Pure helpers ───────────────────────────────────────────────────────────────
 
@@ -53,26 +67,29 @@ function rowKey(c: CompanyRow): string {
 
 function getBankName(bankAccount: string | null): string {
   if (!bankAccount) return 'No Account';
-  // "DIB-1234" or "DIB 1234" → "DIB"
   const m = bankAccount.match(/^([A-Z]{2,})/);
   return m ? m[1] : bankAccount.split(/[\s\-_]/)[0].toUpperCase() || 'Unknown';
 }
+void getBankName; // kept for hidden views
 
 function getEffectiveDates(mode: 'current_month' | 'custom', from: string, to: string) {
   if (mode === 'current_month') {
     const now = new Date();
     const y = now.getFullYear();
     const m = String(now.getMonth() + 1).padStart(2, '0');
-    const d = String(now.getDate()).padStart(2, '0');
-    return { from: `${y}-${m}-01`, to: `${y}-${m}-${d}` };
+    const lastDay = String(new Date(y, now.getMonth() + 1, 0).getDate()).padStart(2, '0');
+    return { from: `${y}-${m}-01`, to: `${y}-${m}-${lastDay}` };
   }
-  return { from, to };
+  // from/to are 'YYYY-MM' strings
+  if (!from || !to) return { from: '', to: '' };
+  const [ty, tm] = to.split('-').map(Number);
+  const lastDay = String(new Date(ty, tm, 0).getDate()).padStart(2, '0');
+  return { from: `${from}-01`, to: `${ty}-${String(tm).padStart(2, '0')}-${lastDay}` };
 }
 
 const CORP_DESIGNATORS = new Set([
   'LLC', 'FZE', 'FZCO', 'FZC', 'LTD', 'LIMITED', 'LLC-FZ', 'FZ', 'CO',
 ]);
-
 const BUSINESS_WORDS = new Set([
   'GENERAL', 'TRADING', 'TECHNOLOGY', 'TECHNOLOGIES', 'REAL', 'ESTATE',
   'INTERNATIONAL', 'EXIM', 'SHIPPING', 'LOGISTICS', 'EVENTS', 'MANAGEMENT',
@@ -82,37 +99,80 @@ const BUSINESS_WORDS = new Set([
   'VENTURE', 'PROJECT', 'SERVICES', 'SERVICE', 'MANUFACTURING', 'MARKETING',
   'MULTY', 'MULTI', 'INT', 'PAPER', 'PLASTIC', 'PLUS', 'RWA',
 ]);
-
 function getCoreCompanyName(name: string): string {
-  let n = name.replace(/L\.L\.C/gi, 'LLC');
-  n = n.replace(/\(.*?\)/g, '').trim();
-  n = n.replace(/-\s*$/, '').trim();
-  n = n.split(/\s+-\s+/)[0].trim();
+  let n = name.replace(/L\.L\.C/gi, 'LLC').replace(/\(.*?\)/g, '').trim().replace(/-\s*$/, '').trim().split(/\s+-\s+/)[0].trim();
   const words = n.toUpperCase().split(/[\s.&,/+]+/).filter((w) => w.length > 0);
   while (words.length > 1 && CORP_DESIGNATORS.has(words[words.length - 1])) words.pop();
   while (words.length > 1 && BUSINESS_WORDS.has(words[words.length - 1])) words.pop();
   return words.join(' ');
 }
-
-function sortRows(rows: CompanyRow[], key: SortKey, dir: SortDir): CompanyRow[] {
-  return [...rows].sort((a, b) => {
-    let cmp = 0;
-    if (key === 'category') cmp = (a.category || 'Z').localeCompare(b.category || 'Z');
-    else if (key === 'company_name') cmp = a.company_name.localeCompare(b.company_name);
-    else if (key === 'bank_account') cmp = (a.bank_account || '').localeCompare(b.bank_account || '');
-    else cmp = a.total_deposits - b.total_deposits;
-    if (cmp !== 0) return dir === 'asc' ? cmp : -cmp;
-    cmp = a.company_name.localeCompare(b.company_name);
-    if (cmp !== 0) return cmp;
-    return (a.bank_account || '').localeCompare(b.bank_account || '');
-  });
-}
+void getCoreCompanyName; // kept for hidden views
 
 function getLimitStatus(row: CompanyRow): 'exceeded' | 'warning' | 'ok' {
-  const { total_deposits, monthly_limit } = row;
-  if (total_deposits >= monthly_limit) return 'exceeded';
-  if (total_deposits >= monthly_limit * 0.8) return 'warning';
+  if (row.total_deposits >= row.monthly_limit) return 'exceeded';
+  if (row.total_deposits >= row.monthly_limit * 0.8) return 'warning';
   return 'ok';
+}
+void getLimitStatus; // kept for hidden views
+
+function getGroupLimitStatus(g: CompanyGroup): 'exceeded' | 'warning' | 'ok' {
+  if (g.total_deposits >= g.monthly_limit) return 'exceeded';
+  if (g.total_deposits >= g.monthly_limit * 0.8) return 'warning';
+  return 'ok';
+}
+
+function buildCompanyGroups(rows: CompanyRow[]): CompanyGroup[] {
+  const map = new Map<number, CompanyGroup>();
+  for (const r of rows) {
+    if (!map.has(r.company_id)) {
+      map.set(r.company_id, {
+        company_id: r.company_id,
+        category: r.category,
+        company_name: r.company_name,
+        owner_name: r.owner_name,
+        monthly_limit: r.monthly_limit,
+        per_tx_limit: r.per_tx_limit,
+        total_deposits: 0,
+        accounts: [],
+        last_transaction_date: null,
+      });
+    }
+    const g = map.get(r.company_id)!;
+    if (r.bank_account !== null) {
+      g.total_deposits = parseFloat((g.total_deposits + r.total_deposits).toFixed(2));
+      g.accounts.push(r);
+      for (const d of r.deposits) {
+        if (!g.last_transaction_date || d.date > g.last_transaction_date) {
+          g.last_transaction_date = d.date;
+        }
+      }
+    }
+  }
+  // Only show companies that have at least one bank account
+  return Array.from(map.values()).filter((g) => g.accounts.length > 0);
+}
+
+const CAT_ORDER: Record<string, number> = { C: 0, B: 1, A: 2 };
+
+function sortGroups(groups: CompanyGroup[], catFilter: CatFilter): CompanyGroup[] {
+  const filtered = catFilter === 'all' ? groups : groups.filter((g) => g.category === catFilter);
+  return [...filtered].sort((a, b) => {
+    // 1. Category: C → B → A → null
+    const aO = CAT_ORDER[a.category ?? ''] ?? 3;
+    const bO = CAT_ORDER[b.category ?? ''] ?? 3;
+    if (aO !== bO) return aO - bO;
+    // 2. Most available capacity first
+    const aAvail = a.monthly_limit - a.total_deposits;
+    const bAvail = b.monthly_limit - b.total_deposits;
+    if (Math.abs(aAvail - bAvail) > 0.01) return bAvail - aAvail;
+    // 3. Most active bank accounts first
+    if (a.accounts.length !== b.accounts.length) return b.accounts.length - a.accounts.length;
+    // 4. Oldest last transaction first (never-used = null = highest priority)
+    if (!a.last_transaction_date && !b.last_transaction_date) return a.company_name.localeCompare(b.company_name);
+    if (!a.last_transaction_date) return -1;
+    if (!b.last_transaction_date) return 1;
+    return a.last_transaction_date.localeCompare(b.last_transaction_date);
+  });
 }
 
 function fmt(n: number): string {
@@ -125,23 +185,53 @@ function fmtK(n: number): string {
   return String(n);
 }
 
+function fmtDate(dateStr: string | null): string {
+  if (!dateStr) return '—';
+  const [y, m, d] = dateStr.split('-');
+  const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  return `${parseInt(d)} ${months[parseInt(m) - 1]} ${y}`;
+}
+
+function fmtMonth(ym: string): string {
+  if (!ym) return '';
+  const [y, m] = ym.split('-');
+  const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  return `${months[parseInt(m) - 1]} ${y}`;
+}
+
+function currentMonthStr(): string {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+}
+
 function todayStr(): string {
   const now = new Date();
   return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
 }
 
-function CategoryBadge({ cat }: { cat: string | null }) {
-  if (!cat) return <span className="text-gray-400 text-xs">—</span>;
+// ── UI primitives ──────────────────────────────────────────────────────────────
+
+function UtilizationBar({ value, limit }: { value: number; limit: number }) {
+  const pct = limit > 0 ? Math.min(100, (value / limit) * 100) : 0;
+  const fill = pct >= 100 ? 'bg-red-500' : pct >= 80 ? 'bg-amber-400' : 'bg-emerald-400';
   return (
-    <span className={cn('px-2 py-0.5 text-xs font-semibold rounded',
-      cat === 'A' ? 'bg-amber-100 text-amber-700' :
-      cat === 'B' ? 'bg-sky-100 text-sky-700' : 'bg-slate-100 text-slate-700')}>
+    <div className="h-1 bg-gray-100 rounded-full overflow-hidden w-full">
+      <div className={cn('h-full rounded-full transition-all', fill)} style={{ width: `${pct}%` }} />
+    </div>
+  );
+}
+
+function CategoryBadge({ cat }: { cat: string | null }) {
+  if (!cat) return <span className="text-gray-300 text-xs">—</span>;
+  const s: Record<string, string> = { A: 'bg-amber-500 text-white', B: 'bg-blue-500 text-white', C: 'bg-slate-500 text-white' };
+  return (
+    <span className={cn('inline-flex items-center justify-center w-5 h-5 rounded text-[10px] font-bold', s[cat] ?? 'bg-gray-400 text-white')}>
       {cat}
     </span>
   );
 }
 
-// ── Deposit planner ────────────────────────────────────────────────────────────
+// ── Deposit planner ─────────────────────────────────────────────────────────────
 
 interface PlanAllocation {
   company_id: number;
@@ -152,46 +242,60 @@ interface PlanAllocation {
   remaining_after: number;
 }
 
-function buildDepositPlan(
-  total: number,
-  rows: CompanyRow[],
-): { allocations: PlanAllocation[]; leftover: number } {
-  const CAT_ORDER: Record<string, number> = { C: 0, B: 1, A: 2 };
+// Rotates through accounts: unused ones first, then by lowest volume
+function buildDepositPlan(total: number, groups: CompanyGroup[]): { allocations: PlanAllocation[]; leftover: number } {
+  type Slot = {
+    company: CompanyGroup;
+    sortedAccounts: CompanyRow[];
+    accountIdx: number;
+    companyAvailable: number;
+    used: number;
+  };
 
-  type Slot = { row: CompanyRow; available: number; used: number };
-
-  const slots: Slot[] = rows
-    .filter((r) => r.bank_account !== null && r.monthly_limit - r.total_deposits > 0.01)
-    .map((r) => ({ row: r, available: r.monthly_limit - r.total_deposits, used: 0 }))
+  const slots: Slot[] = groups
+    .filter((g) => g.monthly_limit - g.total_deposits > 0.01)
+    .map((g) => ({
+      company: g,
+      // Prefer accounts with 0 deposits this period, then lowest volume
+      sortedAccounts: [...g.accounts].sort((a, b) => {
+        if (a.total_deposits === 0 && b.total_deposits > 0) return -1;
+        if (b.total_deposits === 0 && a.total_deposits > 0) return 1;
+        return a.total_deposits - b.total_deposits;
+      }),
+      accountIdx: 0,
+      companyAvailable: g.monthly_limit - g.total_deposits,
+      used: 0,
+    }))
     .sort((a, b) => {
-      const aO = CAT_ORDER[a.row.category ?? ''] ?? 3;
-      const bO = CAT_ORDER[b.row.category ?? ''] ?? 3;
+      const aO = CAT_ORDER[a.company.category ?? ''] ?? 3;
+      const bO = CAT_ORDER[b.company.category ?? ''] ?? 3;
       if (aO !== bO) return aO - bO;
-      return a.row.total_deposits - b.row.total_deposits; // least used first
+      return b.companyAvailable - a.companyAvailable;
     });
 
   const allocations: PlanAllocation[] = [];
   let remaining = total;
   let progress = true;
 
-  // Round-robin: one per_tx_limit chunk per slot per pass
   while (remaining > 0.01 && progress) {
     progress = false;
     for (const slot of slots) {
       if (remaining <= 0.01) break;
-      const room = parseFloat((slot.available - slot.used).toFixed(2));
+      const room = parseFloat((slot.companyAvailable - slot.used).toFixed(2));
       if (room <= 0.01) continue;
-      const chunk = parseFloat(Math.min(slot.row.per_tx_limit, room, remaining).toFixed(2));
+      const account = slot.sortedAccounts[slot.accountIdx % slot.sortedAccounts.length];
+      const chunk = parseFloat(Math.min(slot.company.per_tx_limit, room, remaining).toFixed(2));
       if (chunk <= 0) continue;
       allocations.push({
-        company_id: slot.row.company_id,
-        company_name: slot.row.company_name,
-        bank_account: slot.row.bank_account!,
-        category: slot.row.category,
+        company_id: slot.company.company_id,
+        company_name: slot.company.company_name,
+        bank_account: account.bank_account!,
+        category: slot.company.category,
         amount: chunk,
         remaining_after: parseFloat((room - chunk).toFixed(2)),
       });
       slot.used = parseFloat((slot.used + chunk).toFixed(2));
+      slot.accountIdx++;
       remaining = parseFloat((remaining - chunk).toFixed(2));
       progress = true;
     }
@@ -200,51 +304,84 @@ function buildDepositPlan(
   return { allocations, leftover: remaining > 0.01 ? remaining : 0 };
 }
 
-function byName<T extends { total_deposits: number }>(
-  rows: CompanyRow[],
-  keyFn: (r: CompanyRow) => string,
-  labelFn: (key: string, members: CompanyRow[]) => { label: string; subtitle?: string },
-): { key: string; label: string; subtitle?: string; rows: CompanyRow[]; total_deposits: number }[] {
-  const map = new Map<string, CompanyRow[]>();
-  for (const r of rows) {
-    const k = keyFn(r);
-    if (!map.has(k)) map.set(k, []);
-    map.get(k)!.push(r);
+// ── Month picker (same as Dashboard deposit graph) ────────────────────────────
+
+const MONTH_NAMES = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+
+function MonthPicker({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+  const now = new Date();
+  const [year, setYear] = useState(() => parseInt(value.split('-')[0]));
+  const selMonth = parseInt(value.split('-')[1]) - 1;
+  const selYear  = parseInt(value.split('-')[0]);
+
+  useEffect(() => {
+    function onClick(e: MouseEvent) {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    }
+    document.addEventListener('mousedown', onClick);
+    return () => document.removeEventListener('mousedown', onClick);
+  }, []);
+
+  function select(m: number) {
+    onChange(`${year}-${String(m + 1).padStart(2, '0')}`);
+    setOpen(false);
   }
-  return Array.from(map.entries())
-    .map(([k, members]) => ({
-      key: k,
-      ...labelFn(k, members),
-      rows: [...members].sort(
-        (a, b) => a.company_name.localeCompare(b.company_name) || (a.bank_account || '').localeCompare(b.bank_account || ''),
-      ),
-      total_deposits: members.reduce((s, r) => s + r.total_deposits, 0),
-    }))
-    .sort((a, b) => a.label.localeCompare(b.label));
-}
 
-// ── SortHeader ─────────────────────────────────────────────────────────────────
+  function isFuture(m: number) {
+    return year > now.getFullYear() || (year === now.getFullYear() && m > now.getMonth());
+  }
 
-function SortHeader({ label, col, current, dir, onSort, className }: {
-  label: string; col: SortKey; current: SortKey; dir: SortDir;
-  onSort: (k: SortKey) => void; className?: string;
-}) {
-  const active = current === col;
   return (
-    <th
-      onClick={() => onSort(col)}
-      className={cn('px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide cursor-pointer select-none whitespace-nowrap', className)}
-    >
-      <div className="flex items-center gap-1">
-        {label}
-        <span className="flex flex-col leading-none">
-          <ChevronUp size={10} className={active && dir === 'asc' ? 'text-blue-600' : 'text-gray-300'} />
-          <ChevronDown size={10} className={active && dir === 'desc' ? 'text-blue-600' : 'text-gray-300'} />
-        </span>
-      </div>
-    </th>
+    <div className="relative" ref={ref}>
+      <button onClick={() => setOpen(o => !o)}
+        className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium border border-gray-200 rounded-lg text-gray-700 bg-white hover:bg-gray-50 transition-colors">
+        {MONTH_NAMES[selMonth]} {selYear}
+        <svg width="10" height="10" viewBox="0 0 10 10" fill="none" className="text-gray-400">
+          <path d="M2 3.5L5 6.5L8 3.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+        </svg>
+      </button>
+      {open && (
+        <div className="absolute left-0 top-9 z-50 bg-white border border-gray-200 rounded-xl shadow-lg p-3 w-52">
+          <div className="flex items-center justify-between mb-2.5">
+            <button onClick={() => setYear(y => y - 1)} className="p-1 rounded hover:bg-gray-100 text-gray-500">
+              <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M9 11L5 7L9 3" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg>
+            </button>
+            <span className="text-xs font-semibold text-gray-800">{year}</span>
+            <button onClick={() => setYear(y => y + 1)} disabled={year >= now.getFullYear()}
+              className="p-1 rounded hover:bg-gray-100 text-gray-500 disabled:opacity-30">
+              <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M5 3L9 7L5 11" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg>
+            </button>
+          </div>
+          <div className="grid grid-cols-3 gap-1">
+            {MONTH_NAMES.map((name, m) => {
+              const isSelected = m === selMonth && year === selYear;
+              const disabled   = isFuture(m);
+              return (
+                <button key={m} onClick={() => !disabled && select(m)} disabled={disabled}
+                  className={`px-2 py-1.5 text-xs rounded-lg font-medium transition-colors ${
+                    isSelected ? 'bg-blue-600 text-white' :
+                    disabled   ? 'text-gray-300 cursor-default' :
+                                 'text-gray-600 hover:bg-gray-100'
+                  }`}>
+                  {name}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
+    </div>
   );
 }
+
+// ── Shared input/button styles ─────────────────────────────────────────────────
+
+const inputCls = 'w-full border border-gray-200 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-400 transition-colors';
+const labelCls = 'block text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1.5';
+const btnPrimary = 'px-4 py-2.5 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 transition-colors font-medium';
+const btnSecondary = 'px-4 py-2.5 text-sm text-gray-600 border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors font-medium';
 
 // ── Deposit modal ──────────────────────────────────────────────────────────────
 
@@ -258,7 +395,6 @@ function DepositModal({ company, deposit, onClose, onSave }: {
   const [description, setDescription] = useState(deposit?.description ?? '');
   const [amount, setAmount] = useState(deposit ? String(deposit.amount) : '');
   const [saving, setSaving] = useState(false);
-
   const amountNum = parseFloat(amount) || 0;
   const overTxLimit = amountNum > 0 && amountNum > company.per_tx_limit;
 
@@ -271,55 +407,35 @@ function DepositModal({ company, deposit, onClose, onSave }: {
   }
 
   return (
-    <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
-      <div className="bg-white rounded-xl shadow-xl p-6 w-[400px]">
-        <h2 className="text-base font-semibold text-gray-900 mb-0.5">
-          {deposit ? 'Edit Deposit' : 'Add Deposit'}
-        </h2>
-        <div className="mb-5">
-          <p className="text-xs text-gray-500 font-medium">{company.company_name}</p>
-          {company.bank_account && (
-            <p className="text-xs text-gray-400 mt-0.5">{company.bank_account}</p>
-          )}
+    <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50">
+      <div className="bg-white rounded-2xl shadow-2xl p-7 w-[420px] border border-gray-100">
+        <div className="mb-6">
+          <h2 className="text-base font-semibold text-gray-900">{deposit ? 'Edit Deposit' : 'New Deposit'}</h2>
+          <p className="text-sm text-gray-500 mt-1">{company.company_name}</p>
+          {company.bank_account && <p className="text-xs text-gray-400 mt-0.5 font-mono">{company.bank_account}</p>}
         </div>
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>
-            <label className="block text-xs font-medium text-gray-700 mb-1">Date</label>
-            <input
-              type="date" value={date} onChange={(e) => setDate(e.target.value)} required
-              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-            />
+            <label className={labelCls}>Date</label>
+            <input type="date" value={date} onChange={(e) => setDate(e.target.value)} required className={inputCls} />
           </div>
           <div>
-            <label className="block text-xs font-medium text-gray-700 mb-1">Description</label>
-            <input
-              type="text" value={description} onChange={(e) => setDescription(e.target.value)}
-              placeholder="Enter description" required
-              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-            />
+            <label className={labelCls}>Description</label>
+            <input type="text" value={description} onChange={(e) => setDescription(e.target.value)} placeholder="Enter description" required className={inputCls} />
           </div>
           <div>
-            <label className="block text-xs font-medium text-gray-700 mb-1">Amount (AED)</label>
-            <input
-              type="number" value={amount} onChange={(e) => setAmount(e.target.value)}
-              min="1" step="1" required placeholder="0"
-              className={cn('w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2',
-                overTxLimit ? 'border-amber-400 focus:ring-amber-400' : 'border-gray-300 focus:ring-blue-500')}
-            />
+            <label className={labelCls}>Amount (AED)</label>
+            <input type="number" value={amount} onChange={(e) => setAmount(e.target.value)} min="1" step="1" required placeholder="0"
+              className={cn(inputCls, 'font-mono', overTxLimit && 'border-amber-300 focus:ring-amber-400/20 focus:border-amber-400')} />
             {overTxLimit && (
-              <div className="flex items-center gap-1.5 mt-1.5 px-2.5 py-1.5 text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg">
-                <AlertTriangle size={12} />
-                Exceeds per-transaction limit of AED {fmt(company.per_tx_limit)}
+              <div className="flex items-center gap-1.5 mt-2 px-3 py-2 text-xs text-amber-700 bg-amber-50 border border-amber-100 rounded-lg">
+                <AlertTriangle size={11} /> Exceeds per-transaction limit of AED {fmt(company.per_tx_limit)}
               </div>
             )}
           </div>
-          <div className="flex justify-end gap-3 pt-2">
-            <button type="button" onClick={onClose} className="px-4 py-2 text-sm text-gray-600 border border-gray-300 rounded-lg hover:bg-gray-50">
-              Cancel
-            </button>
-            <button type="submit" disabled={saving} className="px-4 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50">
-              {saving ? 'Saving…' : deposit ? 'Update' : 'Save'}
-            </button>
+          <div className="flex justify-end gap-2 pt-2">
+            <button type="button" onClick={onClose} className={btnSecondary}>Cancel</button>
+            <button type="submit" disabled={saving} className={btnPrimary}>{saving ? 'Saving…' : deposit ? 'Update' : 'Save'}</button>
           </div>
         </form>
       </div>
@@ -329,54 +445,62 @@ function DepositModal({ company, deposit, onClose, onSave }: {
 
 // ── Company limits modal ───────────────────────────────────────────────────────
 
+interface LimitsTarget {
+  company_id: number;
+  company_name: string;
+  per_tx_limit: number;
+  monthly_limit: number;
+  total_deposits: number;
+  first_bank_account: string | null;
+}
+
 function CompanyLimitsModal({ company, onClose, onSave }: {
-  company: CompanyRow;
+  company: LimitsTarget;
   onClose: () => void;
   onSave: (dto: { per_tx_limit: number; monthly_limit: number }) => Promise<void>;
 }) {
   const [perTx, setPerTx] = useState(String(company.per_tx_limit));
   const [monthly, setMonthly] = useState(String(company.monthly_limit));
   const [saving, setSaving] = useState(false);
+  const monthlyNum = parseFloat(monthly) || 0;
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setSaving(true);
-    try { await onSave({ per_tx_limit: parseFloat(perTx), monthly_limit: parseFloat(monthly) }); }
+    try { await onSave({ per_tx_limit: parseFloat(perTx), monthly_limit: monthlyNum }); }
     finally { setSaving(false); }
   }
 
   return (
-    <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
-      <div className="bg-white rounded-xl shadow-xl p-6 w-[380px]">
-        <h2 className="text-base font-semibold text-gray-900 mb-0.5">Deposit Limits</h2>
-        <div className="mb-5">
-          <p className="text-xs text-gray-500 font-medium">{company.company_name}</p>
-          <p className="text-xs text-gray-400 mt-0.5">Applies to all accounts for this company</p>
+    <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50">
+      <div className="bg-white rounded-2xl shadow-2xl p-7 w-[400px] border border-gray-100">
+        <div className="mb-6">
+          <h2 className="text-base font-semibold text-gray-900">Deposit Limits</h2>
+          <p className="text-sm text-gray-500 mt-1">{company.company_name}</p>
+          <p className="text-xs text-gray-400 mt-0.5">Applies to the company total across all bank accounts</p>
+          <div className="mt-3 p-3 bg-gray-50 rounded-xl border border-gray-100">
+            <div className="flex justify-between text-xs text-gray-400 mb-1.5">
+              <span>Current utilization</span>
+              <span className="font-mono font-semibold text-gray-600">
+                {monthlyNum > 0 ? Math.min(100, Math.round((company.total_deposits / monthlyNum) * 100)) : 0}%
+              </span>
+            </div>
+            <UtilizationBar value={company.total_deposits} limit={monthlyNum} />
+            <p className="text-xs text-gray-400 mt-1.5 font-mono">AED {fmt(company.total_deposits)} used across all accounts</p>
+          </div>
         </div>
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>
-            <label className="block text-xs font-medium text-gray-700 mb-1">Per Transaction Limit (AED)</label>
-            <input
-              type="number" value={perTx} onChange={(e) => setPerTx(e.target.value)}
-              min="1" step="1" required
-              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-            />
+            <label className={labelCls}>Per Transaction Limit (AED)</label>
+            <input type="number" value={perTx} onChange={(e) => setPerTx(e.target.value)} min="1" step="1" required className={cn(inputCls, 'font-mono')} />
           </div>
           <div>
-            <label className="block text-xs font-medium text-gray-700 mb-1">Monthly Limit (AED)</label>
-            <input
-              type="number" value={monthly} onChange={(e) => setMonthly(e.target.value)}
-              min="1" step="1" required
-              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-            />
+            <label className={labelCls}>Monthly Limit — Company Total (AED)</label>
+            <input type="number" value={monthly} onChange={(e) => setMonthly(e.target.value)} min="1" step="1" required className={cn(inputCls, 'font-mono')} />
           </div>
-          <div className="flex justify-end gap-3 pt-2">
-            <button type="button" onClick={onClose} className="px-4 py-2 text-sm text-gray-600 border border-gray-300 rounded-lg hover:bg-gray-50">
-              Cancel
-            </button>
-            <button type="submit" disabled={saving} className="px-4 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50">
-              {saving ? 'Saving…' : 'Save'}
-            </button>
+          <div className="flex justify-end gap-2 pt-2">
+            <button type="button" onClick={onClose} className={btnSecondary}>Cancel</button>
+            <button type="submit" disabled={saving} className={btnPrimary}>{saving ? 'Saving…' : 'Save'}</button>
           </div>
         </form>
       </div>
@@ -386,8 +510,8 @@ function CompanyLimitsModal({ company, onClose, onSave }: {
 
 // ── Deposit planner modal ──────────────────────────────────────────────────────
 
-function DepositPlannerModal({ rows, onClose, onDepositsAdded }: {
-  rows: CompanyRow[];
+function DepositPlannerModal({ groups, onClose, onDepositsAdded }: {
+  groups: CompanyGroup[];
   onClose: () => void;
   onDepositsAdded: () => void;
 }) {
@@ -403,7 +527,7 @@ function DepositPlannerModal({ rows, onClose, onDepositsAdded }: {
   function calculate() {
     const n = parseFloat(amount.replace(/,/g, ''));
     if (!n || n <= 0) return;
-    const result = buildDepositPlan(n, rows);
+    const result = buildDepositPlan(n, groups);
     setPlan(result.allocations);
     setLeftover(result.leftover);
     setAdded(new Set());
@@ -414,13 +538,7 @@ function DepositPlannerModal({ rows, onClose, onDepositsAdded }: {
     setDescError(false);
     setSaving((prev) => new Set(prev).add(i));
     try {
-      await createCashDeposit({
-        company_id: alloc.company_id,
-        bank_account: alloc.bank_account,
-        date: todayStr(),
-        description: description.trim(),
-        amount: alloc.amount,
-      });
+      await createCashDeposit({ company_id: alloc.company_id, bank_account: alloc.bank_account, date: todayStr(), description: description.trim(), amount: alloc.amount });
       setAdded((prev) => new Set(prev).add(i));
       onDepositsAdded();
     } finally {
@@ -436,91 +554,65 @@ function DepositPlannerModal({ rows, onClose, onDepositsAdded }: {
     try {
       for (let i = 0; i < plan.length; i++) {
         if (added.has(i)) continue;
-        await createCashDeposit({
-          company_id: plan[i].company_id,
-          bank_account: plan[i].bank_account,
-          date: todayStr(),
-          description: description.trim(),
-          amount: plan[i].amount,
-        });
+        await createCashDeposit({ company_id: plan[i].company_id, bank_account: plan[i].bank_account, date: todayStr(), description: description.trim(), amount: plan[i].amount });
         setAdded((prev) => new Set(prev).add(i));
         onDepositsAdded();
       }
-    } finally {
-      setAddingAll(false);
-    }
+    } finally { setAddingAll(false); }
   }
 
   const allocatedTotal = plan ? plan.reduce((s, a) => s + a.amount, 0) : 0;
-  const uniqueAccounts = plan ? new Set(plan.map((a) => `${a.company_id}::${a.bank_account}`)).size : 0;
+  const uniqueCompanies = plan ? new Set(plan.map((a) => a.company_id)).size : 0;
   const allAdded = plan !== null && plan.length > 0 && added.size === plan.length;
 
   return (
-    <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
-      <div className="bg-white rounded-xl shadow-xl w-[700px] max-h-[85vh] flex flex-col">
-        <div className="px-6 pt-6 pb-4 border-b border-gray-100">
+    <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50">
+      <div className="bg-white rounded-2xl shadow-2xl w-[740px] max-h-[85vh] flex flex-col border border-gray-100">
+        <div className="px-7 pt-7 pb-5 border-b border-gray-100">
           <h2 className="text-base font-semibold text-gray-900">Large Deposit Planner</h2>
-          <p className="text-xs text-gray-400 mt-0.5">
-            Splits an amount across accounts — Category C first, then least-used accounts
-          </p>
+          <p className="text-sm text-gray-400 mt-1">Prioritizes Cat C → B → A; rotates unused accounts first, then by lowest volume</p>
         </div>
-
-        <div className="px-6 py-4 border-b border-gray-100 space-y-3">
+        <div className="px-7 py-5 border-b border-gray-100 space-y-4">
           <div className="flex items-end gap-3">
             <div className="flex-1">
-              <label className="block text-xs font-medium text-gray-700 mb-1">Total Amount to Deposit (AED)</label>
-              <input
-                type="number"
-                value={amount}
+              <label className={labelCls}>Total Amount to Deposit (AED)</label>
+              <input type="number" value={amount}
                 onChange={(e) => { setAmount(e.target.value); setPlan(null); setAdded(new Set()); }}
                 onKeyDown={(e) => e.key === 'Enter' && calculate()}
-                placeholder="e.g. 2000000"
-                min="1"
-                autoFocus
-                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-              />
+                placeholder="e.g. 2000000" min="1" autoFocus className={cn(inputCls, 'font-mono')} />
             </div>
-            <button
-              onClick={calculate}
-              className="px-4 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700"
-            >
-              Find Split
-            </button>
+            <button onClick={calculate} className={btnPrimary}>Find Split</button>
           </div>
           {plan && plan.length > 0 && (
             <div>
-              <label className="block text-xs font-medium text-gray-700 mb-1">
-                Description (applied to all) <span className="text-red-500">*</span>
-              </label>
-              <input
-                type="text"
-                value={description}
+              <label className={labelCls}>Description <span className="normal-case font-normal text-gray-400">(required for all)</span></label>
+              <input type="text" value={description}
                 onChange={(e) => { setDescription(e.target.value); if (e.target.value.trim()) setDescError(false); }}
                 placeholder="e.g. Cash deposit Jun 2026"
-                className={cn('w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2',
-                  descError ? 'border-red-400 focus:ring-red-400' : 'border-gray-300 focus:ring-blue-500')}
-              />
-              {descError && <p className="text-xs text-red-500 mt-1">Description is required before adding deposits</p>}
+                className={cn(inputCls, descError && 'border-red-300 focus:ring-red-400/20 focus:border-red-400')} />
+              {descError && <p className="text-xs text-red-500 mt-1.5">Description is required before adding deposits</p>}
             </div>
           )}
         </div>
-
         <div className="overflow-y-auto flex-1">
           {plan === null ? (
-            <div className="py-16 text-center text-sm text-gray-400">Enter an amount and click Find Split</div>
+            <div className="py-20 text-center">
+              <Calculator size={28} className="text-gray-200 mx-auto mb-3" />
+              <p className="text-sm text-gray-400">Enter an amount and click Find Split</p>
+            </div>
           ) : plan.length === 0 ? (
-            <div className="py-16 text-center text-sm text-gray-400">No accounts have remaining capacity this month</div>
+            <div className="py-20 text-center text-sm text-gray-400">No accounts have remaining capacity this month</div>
           ) : (
             <table className="w-full text-sm">
-              <thead className="bg-gray-50 border-b border-gray-200 sticky top-0">
+              <thead className="border-b border-gray-100 sticky top-0 bg-white">
                 <tr>
-                  <th className="px-4 py-2.5 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide w-8">#</th>
-                  <th className="px-4 py-2.5 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide w-12">Cat</th>
-                  <th className="px-4 py-2.5 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">Company</th>
-                  <th className="px-4 py-2.5 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">Account</th>
-                  <th className="px-4 py-2.5 text-right text-xs font-semibold text-gray-500 uppercase tracking-wide">Deposit (AED)</th>
-                  <th className="px-4 py-2.5 text-right text-xs font-semibold text-gray-500 uppercase tracking-wide">Remaining After</th>
-                  <th className="w-20 px-4 py-2.5" />
+                  <th className="px-5 py-3 text-left text-xs font-semibold text-gray-400 uppercase tracking-wider w-8">#</th>
+                  <th className="px-3 py-3 text-left text-xs font-semibold text-gray-400 uppercase tracking-wider w-12">Cat</th>
+                  <th className="px-3 py-3 text-left text-xs font-semibold text-gray-400 uppercase tracking-wider">Company</th>
+                  <th className="px-3 py-3 text-left text-xs font-semibold text-gray-400 uppercase tracking-wider">Account</th>
+                  <th className="px-3 py-3 text-right text-xs font-semibold text-gray-400 uppercase tracking-wider">Deposit (AED)</th>
+                  <th className="px-3 py-3 text-right text-xs font-semibold text-gray-400 uppercase tracking-wider">Co. Remaining After</th>
+                  <th className="w-20 px-4 py-3" />
                 </tr>
               </thead>
               <tbody>
@@ -528,24 +620,19 @@ function DepositPlannerModal({ rows, onClose, onDepositsAdded }: {
                   const isAdded = added.has(i);
                   const isSaving = saving.has(i);
                   return (
-                    <tr key={i} className={cn('border-b border-gray-100 last:border-0', isAdded ? 'bg-green-50' : 'hover:bg-gray-50/60')}>
-                      <td className="px-4 py-2.5 text-xs text-gray-400 tabular-nums">{i + 1}</td>
-                      <td className="px-4 py-2.5"><CategoryBadge cat={a.category} /></td>
-                      <td className="px-4 py-2.5 text-gray-800 font-medium text-xs">{a.company_name}</td>
-                      <td className="px-4 py-2.5 text-gray-500 text-xs">{a.bank_account}</td>
-                      <td className="px-4 py-2.5 text-right text-xs font-semibold text-gray-800 tabular-nums">{fmt(a.amount)}</td>
-                      <td className="px-4 py-2.5 text-right text-xs tabular-nums text-gray-400">{fmt(a.remaining_after)}</td>
-                      <td className="px-4 py-2.5 text-right">
+                    <tr key={i} className={cn('border-b border-gray-50 last:border-0 transition-colors', isAdded ? 'bg-emerald-50' : 'hover:bg-gray-50/50')}>
+                      <td className="px-5 py-3 text-xs text-gray-300 tabular-nums font-mono">{i + 1}</td>
+                      <td className="px-3 py-3"><CategoryBadge cat={a.category} /></td>
+                      <td className="px-3 py-3 text-gray-800 font-medium text-xs">{a.company_name}</td>
+                      <td className="px-3 py-3 text-gray-400 text-xs font-mono">{a.bank_account}</td>
+                      <td className="px-3 py-3 text-right text-xs font-bold text-gray-900 tabular-nums font-mono">{fmt(a.amount)}</td>
+                      <td className="px-3 py-3 text-right text-xs tabular-nums text-gray-400 font-mono">{fmt(a.remaining_after)}</td>
+                      <td className="px-3 py-3 text-right">
                         {isAdded ? (
-                          <span className="flex items-center justify-end gap-1 text-xs text-green-600 font-medium">
-                            <Check size={12} /> Added
-                          </span>
+                          <span className="flex items-center justify-end gap-1 text-xs text-emerald-600 font-semibold"><Check size={12} /> Added</span>
                         ) : (
-                          <button
-                            onClick={() => addOne(i, a)}
-                            disabled={isSaving || addingAll}
-                            className="flex items-center gap-1 px-2 py-1 text-xs bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50 ml-auto"
-                          >
+                          <button onClick={() => addOne(i, a)} disabled={isSaving || addingAll}
+                            className="flex items-center gap-1 px-2.5 py-1 text-xs bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 ml-auto font-medium transition-colors">
                             <Plus size={11} />{isSaving ? '…' : 'Add'}
                           </button>
                         )}
@@ -554,65 +641,41 @@ function DepositPlannerModal({ rows, onClose, onDepositsAdded }: {
                   );
                 })}
               </tbody>
-              <tfoot className="bg-gray-50 border-t border-gray-200">
+              <tfoot className="border-t border-gray-100 bg-gray-50/60">
                 <tr>
-                  <td colSpan={4} className="px-4 py-2.5 text-xs text-gray-500">
-                    {plan.length} transaction{plan.length !== 1 ? 's' : ''} across {uniqueAccounts} account{uniqueAccounts !== 1 ? 's' : ''}
-                    {added.size > 0 && <span className="ml-2 text-green-600">· {added.size} added</span>}
+                  <td colSpan={4} className="px-5 py-3 text-xs text-gray-400">
+                    {plan.length} deposit{plan.length !== 1 ? 's' : ''} across {uniqueCompanies} compan{uniqueCompanies !== 1 ? 'ies' : 'y'}
+                    {added.size > 0 && <span className="ml-2 text-emerald-600 font-medium">· {added.size} added</span>}
                   </td>
-                  <td className="px-4 py-2.5 text-right text-xs font-bold text-blue-700 tabular-nums">{fmt(allocatedTotal)}</td>
+                  <td className="px-3 py-3 text-right text-sm font-bold text-blue-700 tabular-nums font-mono">{fmt(allocatedTotal)}</td>
                   <td colSpan={2} />
                 </tr>
               </tfoot>
             </table>
           )}
           {leftover > 0.01 && (
-            <div className="mx-4 my-3 flex items-center gap-2 px-3 py-2.5 bg-amber-50 border border-amber-200 rounded-lg text-xs text-amber-700">
-              <AlertTriangle size={13} />
-              <span>Cannot allocate <strong>AED {fmt(leftover)}</strong> — insufficient monthly capacity across all accounts</span>
+            <div className="mx-5 my-3 flex items-center gap-2 px-4 py-3 bg-amber-50 border border-amber-100 rounded-xl text-xs text-amber-700">
+              <AlertTriangle size={13} className="flex-shrink-0" />
+              <span>Cannot allocate <strong className="font-mono">AED {fmt(leftover)}</strong> — insufficient monthly capacity across all accounts</span>
             </div>
           )}
         </div>
-
-        <div className="px-6 py-4 border-t border-gray-100 flex items-center justify-between">
+        <div className="px-7 py-5 border-t border-gray-100 flex items-center justify-between">
           <div>
             {plan && plan.length > 0 && !allAdded && (
-              <button
-                onClick={addAll}
-                disabled={addingAll}
-                className="px-4 py-2 text-sm bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:opacity-50"
-              >
-                {addingAll ? 'Adding…' : 'Add All'}
+              <button onClick={addAll} disabled={addingAll}
+                className="px-4 py-2.5 text-sm bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 disabled:opacity-50 font-medium transition-colors">
+                {addingAll ? 'Adding…' : `Add All ${plan.length} Deposits`}
               </button>
             )}
             {allAdded && (
-              <span className="flex items-center gap-1.5 text-sm text-green-600 font-medium">
-                <Check size={14} /> All deposits added
-              </span>
+              <span className="flex items-center gap-1.5 text-sm text-emerald-600 font-semibold"><Check size={14} /> All deposits added</span>
             )}
           </div>
-          <button onClick={onClose} className="px-4 py-2 text-sm text-gray-600 border border-gray-300 rounded-lg hover:bg-gray-50">
-            Close
-          </button>
+          <button onClick={onClose} className={btnSecondary}>Close</button>
         </div>
       </div>
     </div>
-  );
-}
-
-// ── Grouped table header ───────────────────────────────────────────────────────
-
-function GroupedTableHead({ firstColLabel, canEdit }: { firstColLabel: string; canEdit: boolean }) {
-  return (
-    <thead className="border-b border-gray-200 bg-gray-50">
-      <tr>
-        <th className="w-10 pl-4 py-3" />
-        <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">{firstColLabel}</th>
-        <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide w-24">Accounts</th>
-        <th className="px-4 py-3 text-right text-xs font-semibold text-gray-500 uppercase tracking-wide">Total (AED)</th>
-        {canEdit && <th className="w-20 px-4 py-3" />}
-      </tr>
-    </thead>
   );
 }
 
@@ -624,30 +687,29 @@ export default function CashDepositsTracker() {
   const [rows, setRows] = useState<CompanyRow[]>([]);
   const [loading, setLoading] = useState(true);
 
-  const [viewMode, setViewMode] = useState<ViewMode>('category');
+  // Date filter — month-based ('YYYY-MM')
   const [dateMode, setDateMode] = useState<'current_month' | 'custom'>('current_month');
-  const [fromDate, setFromDate] = useState('');
-  const [toDate, setToDate] = useState('');
+  const [fromMonth, setFromMonth] = useState('');
+  const [toMonth, setToMonth] = useState('');
 
-  const [sortKey, setSortKey] = useState<SortKey>('category');
-  const [sortDir, setSortDir] = useState<SortDir>('desc');
+  // Category filter
+  const [catFilter, setCatFilter] = useState<CatFilter>('all');
 
-  // Expand state per view
-  const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
-  const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
-  const [expandedGroupRowKeys, setExpandedGroupRowKeys] = useState<Set<string>>(new Set());
-  const [expandedBanks, setExpandedBanks] = useState<Set<string>>(new Set());
-  const [expandedBankRowKeys, setExpandedBankRowKeys] = useState<Set<string>>(new Set());
-  const [expandedOwners, setExpandedOwners] = useState<Set<string>>(new Set());
-  const [expandedOwnerRowKeys, setExpandedOwnerRowKeys] = useState<Set<string>>(new Set());
+  // Kept for hidden views (Bank / Owner / Brand)
+  const [_viewMode] = useState<ViewMode>('category');
+  void _viewMode;
+
+  // Expand state for company→account→deposit hierarchy
+  const [expandedCompanies, setExpandedCompanies] = useState<Set<number>>(new Set());
+  const [expandedAccounts, setExpandedAccounts] = useState<Set<string>>(new Set());
 
   const [depositModal, setDepositModal] = useState<{ company: CompanyRow; deposit: Deposit | null } | null>(null);
-  const [limitsModal, setLimitsModal] = useState<CompanyRow | null>(null);
+  const [limitsModal, setLimitsModal] = useState<LimitsTarget | null>(null);
   const [showPlanner, setShowPlanner] = useState(false);
 
   const { from: effectiveFrom, to: effectiveTo } = useMemo(
-    () => getEffectiveDates(dateMode, fromDate, toDate),
-    [dateMode, fromDate, toDate],
+    () => getEffectiveDates(dateMode, fromMonth, toMonth),
+    [dateMode, fromMonth, toMonth],
   );
 
   async function load() {
@@ -656,50 +718,20 @@ export default function CashDepositsTracker() {
     try {
       const data = await fetchCashDeposits(effectiveFrom, effectiveTo);
       setRows(data.rows);
-    } finally {
-      setLoading(false);
-    }
+    } finally { setLoading(false); }
   }
 
   useEffect(() => { load(); }, [effectiveFrom, effectiveTo]); // eslint-disable-line
 
-  function handleSort(key: SortKey) {
-    if (sortKey === key) setSortDir((d) => (d === 'asc' ? 'desc' : 'asc'));
-    else { setSortKey(key); setSortDir(key === 'total_deposits' ? 'desc' : key === 'category' ? 'desc' : 'asc'); }
-  }
+  const companyGroups = useMemo(() => buildCompanyGroups(rows), [rows]);
+  const sortedGroups = useMemo(() => sortGroups(companyGroups, catFilter), [companyGroups, catFilter]);
 
-  const sorted = useMemo(() => sortRows(rows, sortKey, sortDir), [rows, sortKey, sortDir]);
-
-  // Brand groups (company view)
-  const brandGroups = useMemo(() => {
-    const map = new Map<string, CompanyRow[]>();
-    for (const c of rows) {
-      const core = getCoreCompanyName(c.company_name);
-      if (!map.has(core)) map.set(core, []);
-      map.get(core)!.push(c);
-    }
-    return Array.from(map.entries())
-      .map(([core_name, comps]) => ({
-        core_name,
-        companies: comps,
-        total_deposits: comps.reduce((s, c) => s + c.total_deposits, 0),
-      }))
-      .sort((a, b) => a.core_name.localeCompare(b.core_name));
-  }, [rows]);
-
-  // Bank groups
-  const bankGroups = useMemo(() => byName(
-    rows,
-    (r) => getBankName(r.bank_account),
-    (k) => ({ label: k }),
-  ), [rows]);
-
-  // Owner groups
-  const ownerGroups = useMemo(() => byName(
-    rows,
-    (r) => r.owner_name || '—',
-    (k) => ({ label: k }),
-  ), [rows]);
+  const stats = useMemo(() => ({
+    total: companyGroups.reduce((s, g) => s + g.total_deposits, 0),
+    exceeded: companyGroups.filter((g) => getGroupLimitStatus(g) === 'exceeded').length,
+    warning: companyGroups.filter((g) => getGroupLimitStatus(g) === 'warning').length,
+    capacity: companyGroups.reduce((s, g) => s + Math.max(0, g.monthly_limit - g.total_deposits), 0),
+  }), [companyGroups]);
 
   function toggleSet<T>(prev: Set<T>, val: T): Set<T> {
     const next = new Set(prev);
@@ -715,76 +747,53 @@ export default function CashDepositsTracker() {
 
   // ── Render helpers ─────────────────────────────────────────────────────────
 
-  const categoryColSpan = canEdit ? 7 : 6;
-  const groupedColSpan  = canEdit ? 5 : 4;
+  // Columns: chevron | cat | name | info | limits | deposits | [add]
+  const totalCols = canEdit ? 7 : 6;
 
-  function categoryBadge(cat: string | null) { return <CategoryBadge cat={cat} />; }
-
-  function limitBadge(status: ReturnType<typeof getLimitStatus>) {
-    if (status === 'exceeded') return (
-      <span className="flex items-center gap-1 px-2 py-0.5 text-xs font-semibold bg-red-100 text-red-700 rounded-full whitespace-nowrap">
-        <AlertTriangle size={10} /> LIMIT REACHED
-      </span>
-    );
-    if (status === 'warning') return (
-      <span className="flex items-center gap-1 px-2 py-0.5 text-xs font-semibold bg-amber-100 text-amber-700 rounded-full whitespace-nowrap">
-        <AlertTriangle size={10} /> NEAR LIMIT
-      </span>
-    );
-    return null;
+  function statusAccent(status: ReturnType<typeof getGroupLimitStatus>) {
+    if (status === 'exceeded') return 'border-l-red-400';
+    if (status === 'warning') return 'border-l-amber-400';
+    return 'border-l-transparent';
   }
 
-  function rowBg(status: ReturnType<typeof getLimitStatus>, expanded: boolean) {
-    if (status === 'exceeded') return 'bg-red-50';
-    if (status === 'warning') return 'bg-amber-50';
-    return expanded ? 'bg-blue-50/20' : 'bg-white hover:bg-gray-50/60';
-  }
-
-  function txSubRows(company: CompanyRow) {
-    const key = rowKey(company);
-    if (company.deposits.length === 0) {
+  function depositRows(account: CompanyRow) {
+    if (account.deposits.length === 0) {
       return (
-        <tr key={`empty-${key}`}>
-          <td colSpan={categoryColSpan} className="px-8 py-3 text-xs text-gray-400 italic bg-gray-50/60 border-b border-gray-100">
+        <tr key={`empty-${rowKey(account)}`}>
+          <td colSpan={totalCols} className="pl-24 pr-8 py-3 text-xs text-gray-400 italic bg-gray-50/20 border-b border-gray-50">
             No deposits recorded in this period
           </td>
         </tr>
       );
     }
     return (
-      <tr key={`txrows-${key}`}>
-        <td colSpan={categoryColSpan} className="p-0 border-b border-gray-100">
-          <table className="w-full text-xs bg-gray-50/40">
-            <thead>
-              <tr className="border-b border-gray-200">
-                <th className="pl-14 pr-4 py-2 text-left text-gray-400 font-medium w-32">Date</th>
-                <th className="px-4 py-2 text-left text-gray-400 font-medium">Description</th>
-                <th className="px-4 py-2 text-right text-gray-400 font-medium w-36">Amount (AED)</th>
-                <th className="px-4 py-2 text-right text-gray-400 font-medium w-40">Running Total</th>
-                {canEdit && <th className="px-4 py-2 w-16" />}
+      <tr key={`deps-${rowKey(account)}`}>
+        <td colSpan={totalCols} className="p-0 border-b border-gray-100">
+          <table className="w-full text-xs">
+            <thead className="border-b border-gray-100 bg-gray-50/50">
+              <tr>
+                <th className="pl-24 pr-4 py-2.5 text-left text-[10px] font-semibold text-gray-400 uppercase tracking-wider w-40">Date</th>
+                <th className="px-4 py-2.5 text-left text-[10px] font-semibold text-gray-400 uppercase tracking-wider">Description</th>
+                <th className="px-4 py-2.5 text-right text-[10px] font-semibold text-gray-400 uppercase tracking-wider w-36">Amount (AED)</th>
+                <th className="px-4 py-2.5 text-right text-[10px] font-semibold text-gray-400 uppercase tracking-wider w-40">Running (Account)</th>
+                {canEdit && <th className="px-4 py-2.5 w-16" />}
               </tr>
             </thead>
             <tbody>
-              {company.deposits.map((d) => (
-                <tr key={d.id} className="border-b border-gray-100 last:border-0 hover:bg-white/60">
-                  <td className="pl-14 pr-4 py-2 text-gray-600">{d.date}</td>
-                  <td className="px-4 py-2 text-gray-700">{d.description || <span className="text-gray-400 italic">—</span>}</td>
-                  <td className="px-4 py-2 text-right font-medium text-gray-800">
-                    {d.amount > company.per_tx_limit && (
-                      <AlertTriangle size={10} className="inline text-amber-500 mr-1 -mt-0.5" />
-                    )}
+              {account.deposits.map((d) => (
+                <tr key={d.id} className="border-b border-gray-50 last:border-0 hover:bg-blue-50/10 transition-colors">
+                  <td className="pl-24 pr-4 py-2.5 text-gray-500 font-mono">{d.date}</td>
+                  <td className="px-4 py-2.5 text-gray-600">{d.description || <span className="text-gray-300 italic">—</span>}</td>
+                  <td className="px-4 py-2.5 text-right font-mono font-semibold text-gray-800">
+                    {d.amount > account.per_tx_limit && <AlertTriangle size={10} className="inline text-amber-400 mr-1 -mt-0.5" />}
                     {fmt(d.amount)}
                   </td>
-                  <td className="px-4 py-2 text-right text-blue-700 font-semibold tabular-nums">{fmt(d.running_total)}</td>
+                  <td className="px-4 py-2.5 text-right font-mono font-bold text-blue-600">{fmt(d.running_total)}</td>
                   {canEdit && (
-                    <td className="px-4 py-2">
-                      <div className="flex gap-2 justify-end">
-                        <button onClick={() => setDepositModal({ company, deposit: d })} className="text-gray-400 hover:text-blue-600 transition-colors">
-                          <Pencil size={13} />
-                        </button>
-                        <button onClick={() => handleDelete(d.id)} className="text-gray-400 hover:text-red-600 transition-colors">
-                          <Trash2 size={13} />
-                        </button>
+                    <td className="px-4 py-2.5">
+                      <div className="flex gap-2.5 justify-end">
+                        <button onClick={() => setDepositModal({ company: account, deposit: d })} className="text-gray-300 hover:text-blue-500 transition-colors"><Pencil size={12} /></button>
+                        <button onClick={() => handleDelete(d.id)} className="text-gray-300 hover:text-red-500 transition-colors"><Trash2 size={12} /></button>
                       </div>
                     </td>
                   )}
@@ -797,380 +806,276 @@ export default function CashDepositsTracker() {
     );
   }
 
-  function companyRow(company: CompanyRow, isExpanded: boolean, onToggle: () => void, indent = false) {
-    const status = getLimitStatus(company);
-    const key = rowKey(company);
+  function accountSubRow(group: CompanyGroup, account: CompanyRow) {
+    const key = rowKey(account);
+    const isExpanded = expandedAccounts.has(key);
     return (
-      <>
-        <tr
-          key={`row-${key}`}
-          onClick={onToggle}
-          className={cn('border-b border-gray-100 cursor-pointer transition-colors',
-            rowBg(status, isExpanded),
-            indent && 'border-l-[3px] border-l-slate-400',
-          )}
-        >
-          <td className={cn('py-3 w-10', indent ? 'pl-10' : 'pl-4')}>
-            {isExpanded ? <ChevronDown size={14} className="text-gray-400" /> : <ChevronRight size={14} className="text-gray-400" />}
+      <Fragment key={`acct-${key}`}>
+        <tr onClick={() => setExpandedAccounts((p) => toggleSet(p, key))}
+          className="border-b border-gray-50 cursor-pointer hover:bg-gray-50/40 transition-colors bg-white">
+          {/* indent + chevron */}
+          <td className="border-l-[3px] border-l-transparent pl-10 py-3 w-10">
+            {isExpanded ? <ChevronDown size={12} className="text-gray-300" /> : <ChevronRight size={12} className="text-gray-300" />}
           </td>
-          <td className="px-4 py-3 w-20">{categoryBadge(company.category)}</td>
-          <td className="px-4 py-3">
-            <div className="font-medium text-gray-800 text-sm">{company.company_name}</div>
-            {company.owner_name && <div className="text-xs text-gray-400 mt-0.5">{company.owner_name}</div>}
+          <td className="px-3 py-3 w-14" /> {/* cat column empty */}
+          <td className="px-4 py-3" colSpan={2}>
+            <span className="text-xs font-mono text-gray-500 font-medium">{account.bank_account}</span>
+            {account.deposits.length > 0 && (
+              <span className="ml-2 text-[10px] text-gray-300">{account.deposits.length} deposit{account.deposits.length !== 1 ? 's' : ''}</span>
+            )}
           </td>
-          <td className="px-4 py-3 text-xs text-gray-500 tabular-nums whitespace-nowrap">
-            {company.bank_account || <span className="text-gray-300">—</span>}
-          </td>
-          <td className="px-4 py-3 w-44">
-            <div className="flex items-center gap-1.5">
-              <span className="text-xs text-gray-400 tabular-nums">
-                {fmtK(company.per_tx_limit)} tx · {fmtK(company.monthly_limit)} mo
-              </span>
-              {canEdit && company.bank_account !== null && (
-                <button
-                  onClick={(e) => { e.stopPropagation(); setLimitsModal(company); }}
-                  className="text-gray-300 hover:text-blue-500 transition-colors flex-shrink-0"
-                  title="Edit limits"
-                >
-                  <SlidersHorizontal size={12} />
-                </button>
-              )}
-            </div>
-          </td>
-          <td className="px-4 py-3 text-right">
-            <div className="flex items-center justify-end gap-2">
-              {limitBadge(status)}
-              <span className={cn('font-semibold text-sm tabular-nums',
-                status === 'exceeded' ? 'text-red-700' :
-                status === 'warning' ? 'text-amber-700' : 'text-gray-800')}>
-                AED {fmt(company.total_deposits)}
-              </span>
-            </div>
+          <td className="px-4 py-3 w-36" /> {/* limits column empty */}
+          <td className="px-4 py-3 text-right w-52">
+            <span className={cn('font-mono text-sm tabular-nums', account.total_deposits > 0 ? 'text-gray-600 font-semibold' : 'text-gray-300')}>
+              {account.total_deposits > 0 ? fmt(account.total_deposits) : '—'}
+            </span>
           </td>
           {canEdit && (
-            <td className="px-4 py-3 w-20 text-right">
-              <button
-                onClick={(e) => { e.stopPropagation(); setDepositModal({ company, deposit: null }); }}
-                className="flex items-center gap-1 px-2.5 py-1 text-xs bg-blue-600 text-white rounded hover:bg-blue-700 ml-auto"
-              >
+            <td className="px-4 py-3 w-20">
+              <button onClick={(e) => { e.stopPropagation(); setDepositModal({ company: account, deposit: null }); }}
+                className="flex items-center gap-1 px-2.5 py-1.5 text-xs bg-blue-600 text-white rounded-lg hover:bg-blue-700 ml-auto font-medium transition-colors">
                 <Plus size={11} /> Add
               </button>
             </td>
           )}
         </tr>
-        {isExpanded && txSubRows(company)}
-      </>
+        {isExpanded && depositRows(account)}
+      </Fragment>
     );
   }
 
-  // Shared renderer for bank / owner grouped views
-  function renderGroupedRows(
-    groups: { key: string; label: string; subtitle?: string; rows: CompanyRow[]; total_deposits: number }[],
-    expandedGroupsSet: Set<string>,
-    toggleGroupFn: (k: string) => void,
-    expandedRowKeysSet: Set<string>,
-    toggleRowFn: (k: string) => void,
-  ) {
-    return groups.map((group) => {
-      const isGroupExpanded = expandedGroupsSet.has(group.key);
-      return (
-        <Fragment key={`grp-${group.key}`}>
-          <tr
-            onClick={() => toggleGroupFn(group.key)}
-            className={cn(
-              'border-b border-gray-200 cursor-pointer transition-colors',
-              isGroupExpanded ? 'bg-slate-700 hover:bg-slate-600' : 'bg-gray-50 hover:bg-gray-100',
-            )}
-          >
-            <td className="pl-4 py-3 w-10">
-              {isGroupExpanded
-                ? <ChevronDown size={14} className="text-slate-300" />
-                : <ChevronRight size={14} className="text-gray-500" />}
-            </td>
-            <td className="px-4 py-3 font-semibold text-sm" colSpan={2}>
-              <span className={isGroupExpanded ? 'text-white' : 'text-gray-800'}>{group.label}</span>
-              {group.subtitle && (
-                <span className={cn('ml-2 text-xs font-normal', isGroupExpanded ? 'text-slate-300' : 'text-gray-400')}>
-                  {group.subtitle}
-                </span>
-              )}
-            </td>
-            <td className={cn('px-4 py-3 text-right text-xs', isGroupExpanded ? 'text-slate-300' : 'text-gray-400')}>
-              {group.rows.length} {group.rows.length === 1 ? 'account' : 'accounts'}
-            </td>
-            <td className="px-4 py-3 text-right">
-              <span className={cn('font-semibold text-sm tabular-nums', isGroupExpanded ? 'text-white' : 'text-gray-700')}>
-                AED {fmt(group.total_deposits)}
+  function companyGroupRow(group: CompanyGroup) {
+    const status = getGroupLimitStatus(group);
+    const isExpanded = expandedCompanies.has(group.company_id);
+    const pct = group.monthly_limit > 0 ? Math.min(100, (group.total_deposits / group.monthly_limit) * 100) : 0;
+
+    return (
+      <Fragment key={`grp-${group.company_id}`}>
+        <tr onClick={() => setExpandedCompanies((p) => toggleSet(p, group.company_id))}
+          className={cn('border-b border-gray-50 cursor-pointer transition-colors',
+            status === 'exceeded' ? 'hover:bg-red-50/30' :
+            status === 'warning' ? 'hover:bg-amber-50/30' :
+            isExpanded ? 'bg-blue-50/10 hover:bg-blue-50/20' : 'hover:bg-gray-50/60')}>
+          <td className={cn('py-4 w-10 border-l-[3px] pl-3.5', statusAccent(status))}>
+            {isExpanded ? <ChevronDown size={13} className="text-gray-300" /> : <ChevronRight size={13} className="text-gray-300" />}
+          </td>
+          <td className="px-3 py-4 w-14"><CategoryBadge cat={group.category} /></td>
+          <td className="px-4 py-4">
+            <div className="font-semibold text-gray-800 text-sm leading-tight">{group.company_name}</div>
+            {group.owner_name && <div className="text-xs text-gray-400 mt-0.5">{group.owner_name}</div>}
+          </td>
+          <td className="px-4 py-4 w-44">
+            <div className="text-xs text-gray-400">
+              {group.accounts.length} account{group.accounts.length !== 1 ? 's' : ''}
+            </div>
+            <div className="text-xs text-gray-400 mt-0.5">
+              Last: <span className={cn('font-mono', group.last_transaction_date ? 'text-gray-500' : 'text-gray-300')}>
+                {fmtDate(group.last_transaction_date)}
               </span>
-            </td>
-            {canEdit && <td className="px-4 py-3" />}
-          </tr>
-
-          {isGroupExpanded && group.rows.map((c) =>
-            companyRow(
-              c,
-              expandedRowKeysSet.has(rowKey(c)),
-              () => toggleRowFn(rowKey(c)),
-              true,
-            ),
-          )}
-
-          {isGroupExpanded && (
-            <tr>
-              <td colSpan={groupedColSpan} className="h-1 bg-slate-200" />
-            </tr>
-          )}
-        </Fragment>
-      );
-    });
+            </div>
+          </td>
+          <td className="px-4 py-4 w-36">
+            <div className="flex items-center gap-1.5">
+              <span className="text-xs text-gray-300 tabular-nums font-mono">{fmtK(group.per_tx_limit)} / {fmtK(group.monthly_limit)}</span>
+              {canEdit && (
+                <button onClick={(e) => {
+                  e.stopPropagation();
+                  setLimitsModal({ company_id: group.company_id, company_name: group.company_name, per_tx_limit: group.per_tx_limit, monthly_limit: group.monthly_limit, total_deposits: group.total_deposits, first_bank_account: group.accounts[0]?.bank_account ?? null });
+                }}
+                  className="text-gray-200 hover:text-blue-400 transition-colors flex-shrink-0" title="Edit company limits">
+                  <SlidersHorizontal size={11} />
+                </button>
+              )}
+            </div>
+          </td>
+          <td className="px-4 py-4 text-right w-52">
+            <div className="flex flex-col items-end gap-1.5">
+              <div className="flex items-center gap-2">
+                {status === 'exceeded' && (
+                  <span className="inline-flex items-center gap-1 px-1.5 py-0.5 text-[10px] font-bold bg-red-100 text-red-600 rounded uppercase tracking-wide">
+                    <AlertTriangle size={9} /> Limit
+                  </span>
+                )}
+                {status === 'warning' && (
+                  <span className="inline-flex items-center gap-1 px-1.5 py-0.5 text-[10px] font-bold bg-amber-100 text-amber-600 rounded uppercase tracking-wide">
+                    <AlertTriangle size={9} /> Near
+                  </span>
+                )}
+                <span className={cn('font-mono font-bold text-sm tabular-nums',
+                  status === 'exceeded' ? 'text-red-600' : status === 'warning' ? 'text-amber-600' : 'text-gray-800')}>
+                  {fmt(group.total_deposits)}
+                </span>
+              </div>
+              <div className="w-28"><UtilizationBar value={group.total_deposits} limit={group.monthly_limit} /></div>
+              <span className="text-[10px] text-gray-300 font-mono">{pct.toFixed(0)}% of {fmtK(group.monthly_limit)}</span>
+            </div>
+          </td>
+          {canEdit && <td className="px-4 py-4 w-20" />}
+        </tr>
+        {isExpanded && group.accounts.map((account) => accountSubRow(group, account))}
+        {isExpanded && (
+          <tr><td colSpan={totalCols} className="h-px bg-gray-100 p-0" /></tr>
+        )}
+      </Fragment>
+    );
   }
+
+  // ── Period label ───────────────────────────────────────────────────────────
+
+  const periodLabel = useMemo(() => {
+    if (dateMode === 'current_month') return fmtMonth(effectiveFrom.slice(0, 7));
+    if (fromMonth && toMonth) {
+      return fromMonth === toMonth ? fmtMonth(fromMonth) : `${fmtMonth(fromMonth)} → ${fmtMonth(toMonth)}`;
+    }
+    return '—';
+  }, [dateMode, effectiveFrom, fromMonth, toMonth]);
 
   // ── Render ─────────────────────────────────────────────────────────────────
 
   return (
     <Layout>
-      <div className="p-6 space-y-4">
+      <div className="min-h-screen bg-gray-50">
+        <div className="px-8 py-6 space-y-5">
 
-        {/* Header */}
-        <div className="flex items-center justify-between">
-          <h1 className="text-xl font-semibold text-gray-900">Cash Deposit Tracker</h1>
-          <div className="flex items-center gap-2">
-            <button
-              onClick={() => setShowPlanner(true)}
-              className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium border border-blue-200 text-blue-700 bg-blue-50 rounded-lg hover:bg-blue-100 transition-colors"
-            >
-              <Calculator size={13} />
-              Large Deposit
+          {/* Header */}
+          <div className="flex items-center justify-between">
+            <div>
+              <h1 className="text-xl font-bold text-gray-900 tracking-tight">Cash Deposit Tracker</h1>
+              <p className="text-sm text-gray-400 mt-0.5">{periodLabel}</p>
+            </div>
+            <button onClick={() => setShowPlanner(true)}
+              className="flex items-center gap-1.5 px-3.5 py-2 text-xs font-semibold border border-blue-200 text-blue-700 bg-white rounded-lg hover:bg-blue-50 transition-colors shadow-sm">
+              <Calculator size={13} /> Large Deposit
             </button>
-          <div className="flex bg-gray-100 rounded-lg p-0.5 gap-0.5">
-            {VIEW_TABS.map(({ mode, label }) => (
-              <button
-                key={mode}
-                onClick={() => setViewMode(mode)}
-                className={cn('px-3 py-1.5 text-xs font-medium rounded-md transition-colors',
-                  viewMode === mode ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700')}
-              >
-                {label}
-              </button>
-            ))}
           </div>
-          </div>
-        </div>
 
-        {/* Filters */}
-        <div className="flex items-center gap-3 bg-white border border-gray-200 rounded-lg px-4 py-3">
-          <button
-            onClick={() => setDateMode('current_month')}
-            className={cn('px-3 py-1.5 text-xs font-medium rounded-md border transition-colors',
-              dateMode === 'current_month' ? 'bg-blue-600 text-white border-blue-600' : 'text-gray-600 border-gray-300 hover:border-gray-400')}
-          >
-            Current Month
-          </button>
-          <button
-            onClick={() => setDateMode('custom')}
-            className={cn('px-3 py-1.5 text-xs font-medium rounded-md border transition-colors',
-              dateMode === 'custom' ? 'bg-blue-600 text-white border-blue-600' : 'text-gray-600 border-gray-300 hover:border-gray-400')}
-          >
-            Custom Range
-          </button>
-          {dateMode === 'custom' && (
-            <div className="flex items-center gap-2 ml-1">
-              <input type="date" value={fromDate} onChange={(e) => setFromDate(e.target.value)}
-                className="text-xs border border-gray-200 rounded-md px-2.5 py-1.5 text-gray-700 focus:outline-none focus:ring-1 focus:ring-blue-400" />
-              <span className="text-gray-400 text-xs">to</span>
-              <input type="date" value={toDate} onChange={(e) => setToDate(e.target.value)}
-                className="text-xs border border-gray-200 rounded-md px-2.5 py-1.5 text-gray-700 focus:outline-none focus:ring-1 focus:ring-blue-400" />
+          {/* Summary stats */}
+          {!loading && (
+            <div className="grid grid-cols-4 gap-4">
+              <div className="bg-white rounded-xl border border-gray-100 px-5 py-4 shadow-sm">
+                <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide">Total Deposited</p>
+                <p className="text-2xl font-bold text-gray-900 font-mono mt-2 tracking-tight">{fmtK(stats.total)}</p>
+                <p className="text-xs text-gray-400 mt-0.5">AED this period</p>
+              </div>
+              <div className={cn('rounded-xl border px-5 py-4 shadow-sm', stats.exceeded > 0 ? 'bg-red-50 border-red-100' : 'bg-white border-gray-100')}>
+                <p className={cn('text-xs font-semibold uppercase tracking-wide', stats.exceeded > 0 ? 'text-red-400' : 'text-gray-400')}>At Limit</p>
+                <p className={cn('text-2xl font-bold font-mono mt-2 tracking-tight', stats.exceeded > 0 ? 'text-red-600' : 'text-gray-300')}>{stats.exceeded}</p>
+                <p className={cn('text-xs mt-0.5', stats.exceeded > 0 ? 'text-red-400' : 'text-gray-300')}>{stats.exceeded === 1 ? 'company' : 'companies'}</p>
+              </div>
+              <div className={cn('rounded-xl border px-5 py-4 shadow-sm', stats.warning > 0 ? 'bg-amber-50 border-amber-100' : 'bg-white border-gray-100')}>
+                <p className={cn('text-xs font-semibold uppercase tracking-wide', stats.warning > 0 ? 'text-amber-500' : 'text-gray-400')}>Near Limit</p>
+                <p className={cn('text-2xl font-bold font-mono mt-2 tracking-tight', stats.warning > 0 ? 'text-amber-600' : 'text-gray-300')}>{stats.warning}</p>
+                <p className={cn('text-xs mt-0.5', stats.warning > 0 ? 'text-amber-400' : 'text-gray-300')}>{stats.warning === 1 ? 'company' : 'companies'} ≥80%</p>
+              </div>
+              <div className="bg-white rounded-xl border border-gray-100 px-5 py-4 shadow-sm">
+                <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide">Available Capacity</p>
+                <p className="text-2xl font-bold text-emerald-600 font-mono mt-2 tracking-tight">{fmtK(stats.capacity)}</p>
+                <p className="text-xs text-gray-400 mt-0.5">AED remaining</p>
+              </div>
             </div>
           )}
-          <span className="ml-auto text-xs text-gray-400">{effectiveFrom} — {effectiveTo}</span>
-        </div>
 
-        {/* Table */}
-        <div key={viewMode} className="bg-white border border-gray-200 rounded-lg overflow-hidden">
-          {loading ? (
-            <div className="py-16 text-center text-sm text-gray-400">Loading…</div>
-          ) : viewMode === 'category' ? (
+          {/* Filter bar */}
+          <div className="flex items-center gap-3">
+            {/* Date filter */}
+            <div className="flex items-center gap-2 bg-white border border-gray-100 rounded-xl px-4 py-2.5 shadow-sm">
+              <span className="text-xs font-semibold text-gray-400 uppercase tracking-wide mr-1">Period</span>
+              <button onClick={() => setDateMode('current_month')}
+                className={cn('px-3 py-1.5 text-xs font-semibold rounded-lg transition-all',
+                  dateMode === 'current_month' ? 'bg-blue-600 text-white' : 'text-gray-500 hover:text-gray-700 hover:bg-gray-50')}>
+                This Month
+              </button>
+              <button onClick={() => setDateMode('custom')}
+                className={cn('px-3 py-1.5 text-xs font-semibold rounded-lg transition-all',
+                  dateMode === 'custom' ? 'bg-blue-600 text-white' : 'text-gray-500 hover:text-gray-700 hover:bg-gray-50')}>
+                Custom
+              </button>
+              {dateMode === 'custom' && (
+                <div className="flex items-center gap-2 ml-2 pl-2 border-l border-gray-100">
+                  <MonthPicker value={fromMonth || currentMonthStr()} onChange={setFromMonth} />
+                  <span className="text-gray-300 text-xs">→</span>
+                  <MonthPicker value={toMonth || currentMonthStr()} onChange={setToMonth} />
+                </div>
+              )}
+            </div>
 
-            // ── Category view ────────────────────────────────────────────────
-            <table className="w-full">
-              <thead className="border-b border-gray-200 bg-gray-50">
-                <tr>
-                  <th className="w-10 pl-4 py-3" />
-                  <SortHeader label="Cat." col="category" current={sortKey} dir={sortDir} onSort={handleSort} className="w-20" />
-                  <SortHeader label="Company" col="company_name" current={sortKey} dir={sortDir} onSort={handleSort} />
-                  <SortHeader label="Bank Account" col="bank_account" current={sortKey} dir={sortDir} onSort={handleSort} />
-                  <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide w-44">Limits</th>
-                  <SortHeader label="Total Deposits (AED)" col="total_deposits" current={sortKey} dir={sortDir} onSort={handleSort} className="text-right" />
-                  {canEdit && <th className="w-20 px-4 py-3" />}
-                </tr>
-              </thead>
-              <tbody>
-                {sorted.length === 0 ? (
-                  <tr><td colSpan={categoryColSpan} className="py-16 text-center text-sm text-gray-400">No companies found</td></tr>
-                ) : sorted.map((c, i) => (
-                  <Fragment key={rowKey(c)}>
-                    {companyRow(c, expandedIds.has(rowKey(c)), () => setExpandedIds((p) => toggleSet(p, rowKey(c))))}
-                    {/* Company separator — thicker bar after last account of each company */}
-                    {sorted[i + 1]?.company_id !== c.company_id && i < sorted.length - 1 && (
-                      <tr>
-                        <td colSpan={categoryColSpan} className="h-[3px] bg-slate-200 p-0" />
-                      </tr>
-                    )}
-                  </Fragment>
-                ))}
-              </tbody>
-            </table>
+            {/* Category filter */}
+            <div className="flex items-center gap-1 bg-white border border-gray-100 rounded-xl px-3 py-2 shadow-sm">
+              <span className="text-xs font-semibold text-gray-400 uppercase tracking-wide mr-1">Cat</span>
+              {(['all', 'C', 'B', 'A'] as CatFilter[]).map((cat) => (
+                <button key={cat} onClick={() => setCatFilter(cat)}
+                  className={cn('px-3 py-1.5 text-xs font-semibold rounded-lg transition-all',
+                    catFilter === cat
+                      ? cat === 'all' ? 'bg-gray-700 text-white' : cat === 'C' ? 'bg-slate-500 text-white' : cat === 'B' ? 'bg-blue-500 text-white' : 'bg-amber-500 text-white'
+                      : 'text-gray-500 hover:text-gray-700 hover:bg-gray-50')}>
+                  {cat === 'all' ? 'All' : cat}
+                </button>
+              ))}
+            </div>
+          </div>
 
-          ) : viewMode === 'bank' ? (
-
-            // ── Bank view ────────────────────────────────────────────────────
-            <table className="w-full">
-              <GroupedTableHead firstColLabel="Bank" canEdit={canEdit} />
-              <tbody>
-                {bankGroups.length === 0
-                  ? <tr><td colSpan={groupedColSpan} className="py-16 text-center text-sm text-gray-400">No data</td></tr>
-                  : renderGroupedRows(
-                      bankGroups,
-                      expandedBanks,
-                      (k) => setExpandedBanks((p) => toggleSet(p, k)),
-                      expandedBankRowKeys,
-                      (k) => setExpandedBankRowKeys((p) => toggleSet(p, k)),
-                    )}
-              </tbody>
-            </table>
-
-          ) : viewMode === 'owner' ? (
-
-            // ── Owner view ───────────────────────────────────────────────────
-            <table className="w-full">
-              <GroupedTableHead firstColLabel="Owner" canEdit={canEdit} />
-              <tbody>
-                {ownerGroups.length === 0
-                  ? <tr><td colSpan={groupedColSpan} className="py-16 text-center text-sm text-gray-400">No data</td></tr>
-                  : renderGroupedRows(
-                      ownerGroups,
-                      expandedOwners,
-                      (k) => setExpandedOwners((p) => toggleSet(p, k)),
-                      expandedOwnerRowKeys,
-                      (k) => setExpandedOwnerRowKeys((p) => toggleSet(p, k)),
-                    )}
-              </tbody>
-            </table>
-
-          ) : (
-
-            // ── Brand / company view ─────────────────────────────────────────
-            <table className="w-full">
-              <thead className="border-b border-gray-200 bg-gray-50">
-                <tr>
-                  <th className="w-10 pl-4 py-3" />
-                  <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">Brand Group</th>
-                  <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide w-24">Companies</th>
-                  <th className="px-4 py-3 text-right text-xs font-semibold text-gray-500 uppercase tracking-wide">Combined Total (AED)</th>
-                  {canEdit && <th className="w-20 px-4 py-3" />}
-                </tr>
-              </thead>
-              <tbody>
-                {brandGroups.map((group) => {
-                  const groupExpanded = expandedGroups.has(group.core_name);
-                  return (
-                    <Fragment key={`g-${group.core_name}`}>
-                      <tr
-                        onClick={() => setExpandedGroups((p) => toggleSet(p, group.core_name))}
-                        className={cn(
-                          'border-b border-gray-200 cursor-pointer transition-colors',
-                          groupExpanded ? 'bg-slate-700 hover:bg-slate-600' : 'bg-gray-50 hover:bg-gray-100',
-                        )}
-                      >
-                        <td className="pl-4 py-3 w-10">
-                          {groupExpanded
-                            ? <ChevronDown size={14} className="text-slate-300" />
-                            : <ChevronRight size={14} className="text-gray-500" />}
-                        </td>
-                        <td className="px-4 py-3" colSpan={2}>
-                          <span className={cn('font-semibold text-sm', groupExpanded ? 'text-white' : 'text-gray-800')}>
-                            {group.core_name}
-                          </span>
-                          <span className={cn('ml-2 text-xs', groupExpanded ? 'text-slate-300' : 'text-gray-400')}>
-                            {[...new Set(group.companies.map((c) => c.category).filter(Boolean))].sort().join(', ')}
-                          </span>
-                        </td>
-                        <td className={cn('px-4 py-3 text-right', groupExpanded ? 'text-slate-200' : 'text-gray-500')}>
-                          <span className="text-xs">
-                            {group.companies.length} {group.companies.length === 1 ? 'company' : 'companies'}
-                          </span>
-                        </td>
-                        <td className="px-4 py-3 text-right">
-                          <span className={cn('font-semibold text-sm tabular-nums', groupExpanded ? 'text-white' : 'text-gray-700')}>
-                            AED {fmt(group.total_deposits)}
-                          </span>
-                        </td>
-                        {canEdit && <td className="px-4 py-3" />}
-                      </tr>
-                      {groupExpanded && group.companies.map((c) =>
-                        companyRow(
-                          c,
-                          expandedGroupRowKeys.has(rowKey(c)),
-                          () => setExpandedGroupRowKeys((p) => toggleSet(p, rowKey(c))),
-                          true,
-                        ),
-                      )}
-                      {groupExpanded && (
-                        <tr>
-                          <td colSpan={canEdit ? 6 : 5} className="h-1 bg-slate-200" />
-                        </tr>
-                      )}
-                    </Fragment>
-                  );
-                })}
-              </tbody>
-            </table>
-          )}
+          {/* Table */}
+          <div className="bg-white border border-gray-100 rounded-xl shadow-sm overflow-hidden">
+            {loading ? (
+              <div className="py-20 text-center">
+                <div className="inline-flex gap-1.5">
+                  {[0, 100, 200].map((d) => (
+                    <div key={d} className="w-2 h-2 bg-blue-300 rounded-full animate-bounce" style={{ animationDelay: `${d}ms` }} />
+                  ))}
+                </div>
+              </div>
+            ) : (
+              <table className="w-full">
+                <thead className="border-b border-gray-100">
+                  <tr className="bg-gray-50/60">
+                    <th className="w-10 pl-3.5 py-3.5" />
+                    <th className="px-3 py-3.5 text-left text-xs font-semibold text-gray-400 uppercase tracking-wider w-14">Cat</th>
+                    <th className="px-4 py-3.5 text-left text-xs font-semibold text-gray-400 uppercase tracking-wider">Company</th>
+                    <th className="px-4 py-3.5 text-left text-xs font-semibold text-gray-400 uppercase tracking-wider w-44">Last Transaction</th>
+                    <th className="px-4 py-3.5 text-left text-xs font-semibold text-gray-400 uppercase tracking-wider w-36">Limits</th>
+                    <th className="px-4 py-3.5 text-right text-xs font-semibold text-gray-400 uppercase tracking-wider w-52">Company Total (AED)</th>
+                    {canEdit && <th className="w-20 px-4 py-3.5" />}
+                  </tr>
+                </thead>
+                <tbody>
+                  {sortedGroups.length === 0 ? (
+                    <tr>
+                      <td colSpan={totalCols} className="py-20 text-center text-sm text-gray-300">
+                        {catFilter !== 'all' ? `No Category ${catFilter} companies` : 'No companies found'}
+                      </td>
+                    </tr>
+                  ) : (
+                    sortedGroups.map((g) => companyGroupRow(g))
+                  )}
+                </tbody>
+              </table>
+            )}
+          </div>
         </div>
       </div>
 
-      {/* Deposit modal */}
       {depositModal && (
-        <DepositModal
-          company={depositModal.company}
-          deposit={depositModal.deposit}
+        <DepositModal company={depositModal.company} deposit={depositModal.deposit}
           onClose={() => setDepositModal(null)}
           onSave={async (dto) => {
-            if (depositModal.deposit) {
-              await updateCashDeposit(depositModal.deposit.id, dto);
-            } else {
-              await createCashDeposit({
-                company_id: depositModal.company.company_id,
-                bank_account: depositModal.company.bank_account,
-                ...dto,
-              });
-            }
+            if (depositModal.deposit) { await updateCashDeposit(depositModal.deposit.id, dto); }
+            else { await createCashDeposit({ company_id: depositModal.company.company_id, bank_account: depositModal.company.bank_account, ...dto }); }
             setDepositModal(null);
             await load();
-          }}
-        />
+          }} />
       )}
 
-      {/* Company limits modal */}
       {limitsModal && (
-        <CompanyLimitsModal
-          company={limitsModal}
-          onClose={() => setLimitsModal(null)}
+        <CompanyLimitsModal company={limitsModal} onClose={() => setLimitsModal(null)}
           onSave={async (dto) => {
-            await updateCompanyDepositLimits(limitsModal.company_id, limitsModal.bank_account, dto);
+            await updateCompanyDepositLimits(limitsModal.company_id, limitsModal.first_bank_account, dto);
             setLimitsModal(null);
             await load();
-          }}
-        />
+          }} />
       )}
 
-      {/* Deposit planner modal */}
       {showPlanner && (
-        <DepositPlannerModal
-          rows={rows}
-          onClose={() => setShowPlanner(false)}
-          onDepositsAdded={load}
-        />
+        <DepositPlannerModal groups={companyGroups} onClose={() => setShowPlanner(false)} onDepositsAdded={load} />
       )}
     </Layout>
   );

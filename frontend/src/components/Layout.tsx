@@ -4,7 +4,7 @@ import { useAuth } from '../auth/AuthContext';
 import { cn } from '../lib/utils';
 import {
   LayoutDashboard, Upload, FileText, ArrowLeftRight,
-  Flag, Users, LogOut, Landmark, ReceiptText, Building2, Settings, Coins, Briefcase, Banknote, ClipboardList,
+  Flag, Users, LogOut, Landmark, ReceiptText, Building2, Settings, Coins, Briefcase, Banknote, ClipboardList, SlidersHorizontal,
 } from 'lucide-react';
 
 export function Layout({ children }: { children: ReactNode }) {
@@ -47,6 +47,7 @@ export function Layout({ children }: { children: ReactNode }) {
                 { to: '/import', label: 'Import', icon: Upload },
                 { to: '/flags', label: 'Flags', icon: Flag },
                 { to: '/invoice-matching', label: 'Invoice Matching', icon: ReceiptText },
+              { to: '/app-settings', label: 'Settings', icon: SlidersHorizontal },
               ].map(({ to, label, icon: Icon }) => (
                 <NavLink key={to} to={to}
                   className={({ isActive }) => cn('flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition-colors',

@@ -45,6 +45,9 @@ export class CompanyProfile {
   @Column({ type: 'varchar', length: 50, nullable: true })
   contact_phone: string;
 
+  @Column({ type: 'varchar', length: 100, nullable: true })
+  industry: string;
+
   @CreateDateColumn()
   created_at: Date;
 

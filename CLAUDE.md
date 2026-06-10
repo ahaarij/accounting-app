@@ -2,6 +2,10 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Rules
+
+- **Never `git push` unless the user explicitly asks to push.** Commit locally as needed, but do not push to origin without being asked. Vercel and Railway auto-deploy on push to `main`, so pushing = deploying to prod.
+
 ## Project
 
 Financial management platform for a UAE-based multi-company trading group. Originally built as a desktop reconciliation app; **pivoting to a multi-user web app hosted on AWS** (ECS + RDS + S3, ~50 simultaneous users).
@@ -209,22 +213,33 @@ UI highlights: flags grouped critical→warning→info; flag navigation passes `
 
 ---
 
-### ✅ Phase 7 — Company Profiles (complete, 2026-06-07)
+### ✅ Phase 7 — Company Profiles (complete, updated 2026-06-10)
 - 3 new tables: `company_profiles`, `buyers_suppliers`, `company_party_links`
 - `CompaniesModule` at `backend/src/companies/` — CRUD + logo upload (multer → `backend/uploads/logos/`, served at `/uploads/*` via `useStaticAssets`)
 - Sort: A → B → C → null, alphabetical within group
 - 62 companies seeded → trimmed to 52 (10 slash-name "old" companies deleted, only right-side new names kept)
 - Frontend: `/company-profiles` grid + `/company-profiles/:id` 3-column view (suppliers | company | buyers)
+- Migration `1000000000011-CompanyProfileExtras.ts` adds: `country VARCHAR(100)`, `is_active BOOLEAN DEFAULT true`, `contact_emails TEXT` (CSV), `contact_phone VARCHAR(50)` — applied manually via docker psql
+- Entity: `backend/src/entities/company-profile.entity.ts` has all 4 new fields
+- `CompaniesModule` `create()`/`update()` accept all new fields
+- `/company-profiles` grid: country + active/inactive filter dropdowns; inactive badge on cards; dynamic email list UI (add/remove per field); country uses `COUNTRIES` dropdown from `frontend/src/lib/countries.ts`
+- `/company-profiles/:id` detail: active badge, Globe/Phone/Mail icons for contact info, dynamic email pills, country shown; label "Company Active Accounts" → "Company Accounts"
 - Import page: subtitle + 4 Excel dropzones + Recon + Reset all hidden with `{false &&}` — not deleted
 - Sidebar: Recon Report + Cash Ledger commented out of navItems
 - Cash Ledger: Balance column hidden (commented out in form, header, cell — DB field intact)
 
-### ✅ Phase 8 — Cash Deposits Tracker (complete, 2026-06-08)
-- `/cash-deposits` page — tracks cash transaction limits per company per bank account
-- Per-bank-account row structure: composite key `${company_id}:${bank_account ?? '__none__'}` for expand/collapse
-- 4 view modes: **Category** (A/B/C/none groups with company separator bars), **By Bank** (DIB/NBF/etc grouped), **By Owner** (owner-grouped), **Company** (flat)
-- `key={viewMode}` on wrapper div prevents stale rows when switching views
-- API: `GET /cash-deposits` returns `{ rows: CompanyRow[] }`; `PATCH /cash-deposits/company-limits/:id` accepts `bank_account` param
+### ✅ Phase 8 — Cash Deposits Tracker (complete, updated 2026-06-10)
+- `/cash-deposits` page — tracks cash deposit limits per **company** (limit spans all bank accounts)
+- Backend: `GET /cash-deposits` returns flat `CompanyRow[]` (one per company+account); `PATCH /cash-deposits/company-limits/:id` already updates ALL accounts for the company
+- Frontend groups rows into `CompanyGroup` (sum deposits across all accounts, use shared monthly_limit)
+- Default limits by category: C=750K/mo, B=500K/mo, A=250K/mo (all per_tx=250K)
+- **Display**: company row (total vs limit, utilization bar, last tx date) → expand → account sub-rows → expand → deposit rows
+- **Sort**: C→B→A→null, then most available capacity, then most accounts, then oldest last transaction
+- **Category filter**: All/C/B/A pill buttons; By Bank/Owner/Brand views hidden (code kept)
+- **Date filter**: month-only using same `MonthPicker` dropdown-calendar as Dashboard deposit graph (Safari-safe)
+- **Large Deposit Planner**: rotates accounts — unused this period first, then lowest volume; uses `CompanyGroup` for company-wide capacity check
+- Companies with no bank accounts filtered out entirely
+- 4 summary stat cards: Total Deposited, At Limit (companies), Near Limit, Available Capacity
 
 ### ✅ Phase 6 (partial) — Additional features (complete)
 
@@ -240,8 +255,7 @@ UI highlights: flags grouped critical→warning→info; flag navigation passes `
 
 ## Next — Remaining work
 
-- **Verify build**: `cd frontend && pnpm run build` and `cd backend && pnpm run start:dev` — not yet confirmed clean after auth changes
-- **Test auth flow end-to-end**: register → pending → approve in User Management → login
+- **Company Profiles UI improvements** (next session — see STATUS.md)
 - Invoice system: VAT / offshore / third-port invoices
 - Product lists with daily pricing per company
-- AWS deployment: ECS (NestJS) + RDS (PostgreSQL) + S3 (files) + CloudFront (React)
+- Azure migration (student pack) → then AWS (ECS + RDS + S3)

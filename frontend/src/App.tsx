@@ -21,6 +21,7 @@ import CompanyProfiles from './pages/CompanyProfiles';
 import CompanyProfileDetail from './pages/CompanyProfileDetail';
 import CashDepositsTracker from './pages/CashDepositsTracker';
 import AuditLogs from './pages/AuditLogs';
+import AppSettings from './pages/AppSettings';
 
 // Roles allowed to access operational pages (not plain users)
 const OPS = ['super_admin', 'admin', 'developer'] as const;
@@ -55,6 +56,7 @@ export default function App() {
           <Route path="/account-group/:type" element={<PrivateRoute roles={[...OPS]}><AccountsList /></PrivateRoute>} />
           <Route path="/cash" element={<PrivateRoute roles={[...OPS]}><CashLedger /></PrivateRoute>} />
           <Route path="/settings" element={<PrivateRoute roles={[...OPS]}><Settings /></PrivateRoute>} />
+          <Route path="/app-settings" element={<PrivateRoute roles={[...OPS]}><AppSettings /></PrivateRoute>} />
 
           {/* Management — super_admin, admin only */}
           <Route path="/users" element={<PrivateRoute roles={[...MGMT]}><UserManagement /></PrivateRoute>} />

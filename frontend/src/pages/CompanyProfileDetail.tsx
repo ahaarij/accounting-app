@@ -4,14 +4,26 @@ import { Layout } from '../components/Layout';
 import { useAuth } from '../auth/AuthContext';
 import {
   getCompanyProfile, getCompanyProfiles, updateCompanyProfile, uploadCompanyLogo,
-  createBuyerSupplier, addCompanyLink, removeCompanyLink,
+  createBuyerSupplier, addCompanyLink,
   updateBuyerSupplier, deleteBuyerSupplier, API_BASE,
 } from '../api';
-import { COUNTRIES } from '../lib/countries';
 import {
-  ArrowLeft, Pencil, X, Plus, Trash2, Link2, Building2,
+  ArrowLeft, Pencil, X, Plus, Trash2, Link2,
   MapPin, TrendingUp, Landmark, User, Globe, Phone, Mail,
 } from 'lucide-react';
+
+const COUNTRIES = ['UAE', 'India', 'Hong Kong', 'US', 'Canada'];
+const FALLBACK_BANKS = [
+  'NBF', 'SIB', 'ADIB', 'WIO', 'MASHREQ', 'MASHREQ NEO',
+  'ENBD', 'FAB', 'EIB', 'ADCB', 'RAK', 'UBL',
+  'SCB', 'LIV', 'HBZ', 'INDUS IND', 'BANQUE MISR',
+];
+const FALLBACK_CATS = ['General Trading', 'Logistics', 'IT', 'Real Estate', 'Manufacturing', 'Retail', 'Services', 'Offshore'];
+
+function lsGet<T>(key: string, fb: T): T {
+  try { const v = localStorage.getItem(key); if (v) return JSON.parse(v); } catch {}
+  return fb;
+}
 
 interface Party {
   link_id: number;
@@ -38,14 +50,15 @@ interface ProfileDetail {
   is_active: boolean;
   contact_emails: string | null;
   contact_phone: string | null;
+  industry: string | null;
   suppliers: Party[];
   buyers: Party[];
 }
 
-const CATEGORY_STYLES: Record<string, { bg: string; text: string; label: string }> = {
-  A: { bg: 'bg-amber-50 border-amber-200', text: 'text-amber-800', label: 'Category A' },
-  B: { bg: 'bg-sky-50 border-sky-200', text: 'text-sky-800', label: 'Category B' },
-  C: { bg: 'bg-slate-50 border-slate-200', text: 'text-slate-700', label: 'Category C' },
+const TIER_STYLES: Record<string, { bg: string; text: string; label: string }> = {
+  A: { bg: 'bg-amber-50 border-amber-200', text: 'text-amber-800', label: 'Tier A' },
+  B: { bg: 'bg-sky-50 border-sky-200', text: 'text-sky-800', label: 'Tier B' },
+  C: { bg: 'bg-slate-50 border-slate-200', text: 'text-slate-700', label: 'Tier C' },
 };
 
 function AccountPills({ raw }: { raw: string | null }) {
@@ -54,10 +67,40 @@ function AccountPills({ raw }: { raw: string | null }) {
   return (
     <div className="flex flex-wrap gap-1.5">
       {accounts.map(a => (
-        <span key={a} className="text-xs bg-blue-50 text-blue-700 border border-blue-200 px-2 py-0.5 rounded-full">
-          {a}
-        </span>
+        <span key={a} className="text-xs bg-blue-50 text-blue-700 border border-blue-200 px-2 py-0.5 rounded-full">{a}</span>
       ))}
+    </div>
+  );
+}
+
+function BankSelector({ label, banks, selected, onChange }: {
+  label: string; banks: string[]; selected: string[]; onChange: (s: string[]) => void;
+}) {
+  const toggle = (b: string) => onChange(selected.includes(b) ? selected.filter(x => x !== b) : [...selected, b]);
+  return (
+    <div>
+      <div className="flex items-center justify-between mb-2">
+        <label className="text-xs font-medium text-gray-600">{label}</label>
+        {selected.length > 0 && <span className="text-xs text-blue-600 font-medium">{selected.length} selected</span>}
+      </div>
+      {banks.length === 0 ? (
+        <p className="text-xs text-gray-400 py-2 px-3 bg-gray-50 rounded-lg border border-dashed border-gray-200">
+          No banks in Settings yet
+        </p>
+      ) : (
+        <div className="flex flex-wrap gap-1.5 p-3 bg-gray-50 rounded-xl border border-gray-200">
+          {banks.map(b => (
+            <button key={b} type="button" onClick={() => toggle(b)}
+              className={`text-xs px-3 py-1.5 rounded-lg border font-medium transition-all ${
+                selected.includes(b)
+                  ? 'bg-blue-600 text-white border-blue-600 shadow-sm'
+                  : 'bg-white text-gray-500 border-gray-200 hover:border-blue-300 hover:text-blue-600'
+              }`}>
+              {b}
+            </button>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
@@ -75,38 +118,42 @@ export default function CompanyProfileDetail() {
   const [allProfiles, setAllProfiles] = useState<{ id: number; company_name: string }[]>([]);
   const [loading, setLoading] = useState(true);
 
-  // Edit profile state
   const [editMode, setEditMode] = useState(false);
   const [editForm, setEditForm] = useState<any>({});
   const [saving, setSaving] = useState(false);
   const [emailList, setEmailList] = useState<string[]>(['']);
+  const [companyAccounts, setCompanyAccounts] = useState<string[]>([]);
+  const [personalAccounts, setPersonalAccounts] = useState<string[]>([]);
+  const [industryEdit, setIndustryEdit] = useState('');
+  const [bankNames, setBankNames] = useState<string[]>([]);
+  const [categories, setCategories] = useState<string[]>([]);
 
-  // Add party modal
   const [partyModal, setPartyModal] = useState<'buyer' | 'supplier' | null>(null);
   const [partyForm, setPartyForm] = useState({ ...EMPTY_PARTY });
   const [partySaving, setPartySaving] = useState(false);
 
-  // Edit party modal
   const [editParty, setEditParty] = useState<Party | null>(null);
   const [editPartyForm, setEditPartyForm] = useState({ ...EMPTY_PARTY });
   const [editPartySaving, setEditPartySaving] = useState(false);
 
-  // Delete party confirm
   const [deleteParty, setDeleteParty] = useState<{ party: Party; relationship: string } | null>(null);
 
   const load = () => {
     if (!id) return;
     setLoading(true);
-    Promise.all([
-      getCompanyProfile(Number(id)),
-      getCompanyProfiles(),
-    ]).then(([pRes, allRes]) => {
-      setProfile(pRes.data);
-      setAllProfiles(allRes.data);
-    }).finally(() => setLoading(false));
+    Promise.all([getCompanyProfile(Number(id)), getCompanyProfiles()])
+      .then(([pRes, allRes]) => {
+        setProfile(pRes.data);
+        setAllProfiles(allRes.data);
+      })
+      .finally(() => setLoading(false));
   };
 
-  useEffect(() => { load(); }, [id]);
+  useEffect(() => {
+    setBankNames(lsGet('settings_bank_names', FALLBACK_BANKS));
+    setCategories(lsGet('settings_company_categories', FALLBACK_CATS));
+    load();
+  }, [id]);
 
   const openEdit = () => {
     if (!profile) return;
@@ -116,15 +163,15 @@ export default function CompanyProfileDetail() {
       owner_name: profile.owner_name ?? '',
       address: profile.address ?? '',
       turnover_aed: profile.turnover_aed != null ? String(profile.turnover_aed) : '',
-      company_active_accounts: profile.company_active_accounts ?? '',
-      personal_active_accounts: profile.personal_active_accounts ?? '',
       country: profile.country ?? '',
       is_active: profile.is_active ?? true,
-      contact_emails: profile.contact_emails ?? '',
       contact_phone: profile.contact_phone ?? '',
     });
+    setCompanyAccounts(profile.company_active_accounts ? profile.company_active_accounts.split(',').map(s => s.trim()).filter(Boolean) : []);
+    setPersonalAccounts(profile.personal_active_accounts ? profile.personal_active_accounts.split(',').map(s => s.trim()).filter(Boolean) : []);
     const emails = profile.contact_emails ? profile.contact_emails.split(',').map(e => e.trim()).filter(Boolean) : [];
     setEmailList(emails.length > 0 ? emails : ['']);
+    setIndustryEdit(profile.industry || '');
     setEditMode(true);
   };
 
@@ -138,12 +185,13 @@ export default function CompanyProfileDetail() {
         owner_name: editForm.owner_name || undefined,
         address: editForm.address || undefined,
         turnover_aed: editForm.turnover_aed ? Number(editForm.turnover_aed) : undefined,
-        company_active_accounts: editForm.company_active_accounts || undefined,
-        personal_active_accounts: editForm.personal_active_accounts || undefined,
+        company_active_accounts: companyAccounts.join(', ') || undefined,
+        personal_active_accounts: personalAccounts.join(', ') || undefined,
         country: editForm.country || undefined,
         is_active: editForm.is_active,
         contact_emails: emailList.filter(e => e.trim()).join(',') || undefined,
         contact_phone: editForm.contact_phone || undefined,
+        industry: industryEdit || undefined,
       });
       setEditMode(false);
       load();
@@ -212,12 +260,6 @@ export default function CompanyProfileDetail() {
     }
   };
 
-  const handleRemoveLink = async (party: Party, relationship: string) => {
-    if (!profile) return;
-    await removeCompanyLink(profile.id, party.link_id);
-    load();
-  };
-
   const handleDeleteParty = async () => {
     if (!deleteParty || !profile) return;
     await deleteBuyerSupplier(deleteParty.party.id);
@@ -228,7 +270,7 @@ export default function CompanyProfileDetail() {
   if (loading) return <Layout><div className="p-8 text-gray-400">Loading…</div></Layout>;
   if (!profile) return <Layout><div className="p-8 text-gray-500">Company not found.</div></Layout>;
 
-  const catStyle = profile.category ? CATEGORY_STYLES[profile.category] : null;
+  const tierStyle = profile.category ? TIER_STYLES[profile.category] : null;
 
   const PartyCard = ({ party, relationship }: { party: Party; relationship: string }) => (
     <div className="bg-white border border-gray-200 rounded-lg p-3 group hover:border-gray-300 transition-colors">
@@ -236,12 +278,9 @@ export default function CompanyProfileDetail() {
         <div className="min-w-0">
           <p className="text-sm font-medium text-gray-900 truncate">{party.name}</p>
           {party.linked_company && (
-            <button
-              onClick={() => navigate(`/company-profiles/${party.linked_company!.id}`)}
-              className="text-xs text-blue-600 hover:underline flex items-center gap-1 mt-0.5"
-            >
-              <Link2 size={10} />
-              {party.linked_company.company_name}
+            <button onClick={() => navigate(`/company-profiles/${party.linked_company!.id}`)}
+              className="text-xs text-blue-600 hover:underline flex items-center gap-1 mt-0.5">
+              <Link2 size={10} />{party.linked_company.company_name}
             </button>
           )}
           {party.address && <p className="text-xs text-gray-400 mt-1 truncate">{party.address}</p>}
@@ -249,12 +288,8 @@ export default function CompanyProfileDetail() {
         </div>
         {canEdit && (
           <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity shrink-0">
-            <button onClick={() => openEditParty(party)} className="p-1 rounded hover:bg-gray-100 text-gray-400 hover:text-blue-600">
-              <Pencil size={12} />
-            </button>
-            <button onClick={() => setDeleteParty({ party, relationship })} className="p-1 rounded hover:bg-gray-100 text-gray-400 hover:text-red-600">
-              <Trash2 size={12} />
-            </button>
+            <button onClick={() => openEditParty(party)} className="p-1 rounded hover:bg-gray-100 text-gray-400 hover:text-blue-600"><Pencil size={12} /></button>
+            <button onClick={() => setDeleteParty({ party, relationship })} className="p-1 rounded hover:bg-gray-100 text-gray-400 hover:text-red-600"><Trash2 size={12} /></button>
           </div>
         )}
       </div>
@@ -265,11 +300,11 @@ export default function CompanyProfileDetail() {
     <Layout>
       {/* Top bar */}
       <div className="flex items-center justify-between px-8 py-4 bg-white border-b border-gray-200">
-        <button onClick={() => navigate('/company-profiles')} className="flex items-center gap-2 text-sm text-gray-500 hover:text-gray-800">
+        <button onClick={() => navigate('/company-profiles')} className="flex items-center gap-2 text-sm text-gray-500 hover:text-gray-800 transition-colors">
           <ArrowLeft size={15} /> Company Profiles
         </button>
         {canEdit && (
-          <button onClick={openEdit} className="flex items-center gap-2 text-sm border border-gray-200 hover:border-gray-300 px-3 py-1.5 rounded-lg text-gray-600 hover:text-gray-900">
+          <button onClick={openEdit} className="flex items-center gap-2 text-sm border border-gray-200 hover:border-gray-300 px-3 py-1.5 rounded-lg text-gray-600 hover:text-gray-900 transition-colors">
             <Pencil size={13} /> Edit Profile
           </button>
         )}
@@ -286,10 +321,8 @@ export default function CompanyProfileDetail() {
               <p className="text-xs text-gray-400">{profile.suppliers.length} linked</p>
             </div>
             {canEdit && (
-              <button
-                onClick={() => openAddParty('supplier')}
-                className="flex items-center gap-1 text-xs bg-blue-600 hover:bg-blue-700 text-white px-2.5 py-1.5 rounded-lg"
-              >
+              <button onClick={() => openAddParty('supplier')}
+                className="flex items-center gap-1 text-xs bg-blue-600 hover:bg-blue-700 text-white px-2.5 py-1.5 rounded-lg transition-colors">
                 <Plus size={12} /> Add
               </button>
             )}
@@ -305,55 +338,60 @@ export default function CompanyProfileDetail() {
 
         {/* CENTER — Company Profile */}
         <div className="flex-1 overflow-y-auto bg-white">
-          <div className="max-w-lg mx-auto px-8 py-8">
+          <div className="max-w-md mx-auto px-8 py-8">
 
             {/* Logo */}
             <div className="flex flex-col items-center mb-6">
               <div className="relative group">
                 {profile.logo_path ? (
-                  <img
-                    src={`${API_BASE}/uploads/${profile.logo_path}`}
-                    alt="Company logo"
-                    className="w-24 h-24 rounded-2xl object-cover border-2 border-gray-100 shadow-sm"
-                  />
+                  <img src={`${API_BASE}/uploads/${profile.logo_path}`} alt="Company logo"
+                    className="w-24 h-24 rounded-2xl object-cover border-2 border-gray-100 shadow-sm" />
                 ) : (
                   <div className="w-24 h-24 rounded-2xl bg-slate-100 flex items-center justify-center text-slate-500 font-bold text-2xl shadow-sm">
                     {profile.company_name.slice(0, 2).toUpperCase()}
                   </div>
                 )}
                 {canEdit && (
-                  <button
-                    onClick={() => logoInputRef.current?.click()}
-                    className="absolute inset-0 rounded-2xl bg-black/0 group-hover:bg-black/30 flex items-center justify-center text-white opacity-0 group-hover:opacity-100 transition-all text-xs font-medium"
-                  >
+                  <button onClick={() => logoInputRef.current?.click()}
+                    className="absolute inset-0 rounded-2xl bg-black/0 group-hover:bg-black/30 flex items-center justify-center text-white opacity-0 group-hover:opacity-100 transition-all text-xs font-medium">
                     Change
                   </button>
                 )}
               </div>
               <input ref={logoInputRef} type="file" accept="image/*" className="hidden" onChange={handleLogoChange} />
 
-              {/* Category + active badges */}
+              {/* Badges */}
               <div className="mt-3 flex items-center gap-2 flex-wrap justify-center">
-                {profile.category && catStyle && (
-                  <span className={`text-xs font-semibold px-3 py-1 rounded-full border ${catStyle.bg} ${catStyle.text}`}>
-                    {catStyle.label}
+                {profile.category && tierStyle && (
+                  <span className={`text-xs font-semibold px-3 py-1 rounded-full border ${tierStyle.bg} ${tierStyle.text}`}>
+                    {tierStyle.label}
                   </span>
                 )}
-                <span className={`text-xs font-semibold px-3 py-1 rounded-full border ${profile.is_active ? 'bg-green-50 border-green-200 text-green-700' : 'bg-gray-100 border-gray-200 text-gray-500'}`}>
+                <span className={`inline-flex items-center gap-1.5 text-xs font-semibold px-3 py-1 rounded-full border ${
+                  profile.is_active
+                    ? 'bg-green-50 border-green-200 text-green-700'
+                    : 'bg-gray-100 border-gray-200 text-gray-500'
+                }`}>
+                  <span className={`w-1.5 h-1.5 rounded-full ${profile.is_active ? 'bg-green-500' : 'bg-gray-400'}`} />
                   {profile.is_active ? 'Active' : 'Inactive'}
                 </span>
+                {profile.industry && (
+                  <span className="text-xs bg-teal-50 text-teal-700 border border-teal-200 px-3 py-1 rounded-full font-medium">
+                    {profile.industry}
+                  </span>
+                )}
               </div>
             </div>
 
             {/* Company name */}
-            <h1 className="text-xl font-bold text-gray-900 text-center mb-1 leading-tight">
+            <h1 className="text-xl font-bold text-gray-900 text-center mb-6 leading-tight">
               {profile.company_name}
             </h1>
 
-            <div className="mt-6 space-y-5">
+            <div className="space-y-5">
               {/* Owner */}
               <div className="flex items-start gap-3">
-                <User size={16} className="text-gray-400 mt-0.5 shrink-0" />
+                <User size={15} className="text-gray-400 mt-0.5 shrink-0" />
                 <div>
                   <p className="text-xs text-gray-400 mb-0.5">Owner / Manager</p>
                   <p className="text-sm text-gray-800">{profile.owner_name || <span className="text-gray-400 italic">Not specified</span>}</p>
@@ -361,34 +399,35 @@ export default function CompanyProfileDetail() {
               </div>
 
               {/* Address */}
-              <div className="flex items-start gap-3">
-                <MapPin size={16} className="text-gray-400 mt-0.5 shrink-0" />
-                <div>
-                  <p className="text-xs text-gray-400 mb-0.5">Address</p>
-                  <p className="text-sm text-gray-800 whitespace-pre-line">{profile.address || <span className="text-gray-400 italic">Not specified</span>}</p>
+              {profile.address && (
+                <div className="flex items-start gap-3">
+                  <MapPin size={15} className="text-gray-400 mt-0.5 shrink-0" />
+                  <div>
+                    <p className="text-xs text-gray-400 mb-0.5">Address</p>
+                    <p className="text-sm text-gray-800 whitespace-pre-line">{profile.address}</p>
+                  </div>
                 </div>
-              </div>
+              )}
 
               {/* Turnover */}
-              <div className="flex items-start gap-3">
-                <TrendingUp size={16} className="text-gray-400 mt-0.5 shrink-0" />
-                <div>
-                  <p className="text-xs text-gray-400 mb-0.5">Annual Turnover</p>
-                  <p className="text-sm text-gray-800">
-                    {profile.turnover_aed != null
-                      ? `AED ${Number(profile.turnover_aed).toLocaleString('en-AE', { minimumFractionDigits: 2 })}`
-                      : <span className="text-gray-400 italic">Not specified</span>
-                    }
-                  </p>
+              {profile.turnover_aed != null && (
+                <div className="flex items-start gap-3">
+                  <TrendingUp size={15} className="text-gray-400 mt-0.5 shrink-0" />
+                  <div>
+                    <p className="text-xs text-gray-400 mb-0.5">Annual Turnover</p>
+                    <p className="text-sm text-gray-800">
+                      AED {Number(profile.turnover_aed).toLocaleString('en-AE', { minimumFractionDigits: 2 })}
+                    </p>
+                  </div>
                 </div>
-              </div>
+              )}
 
               <hr className="border-gray-100" />
 
               {/* Country */}
               {profile.country && (
                 <div className="flex items-start gap-3">
-                  <Globe size={16} className="text-gray-400 mt-0.5 shrink-0" />
+                  <Globe size={15} className="text-gray-400 mt-0.5 shrink-0" />
                   <div>
                     <p className="text-xs text-gray-400 mb-0.5">Country</p>
                     <p className="text-sm text-gray-800">{profile.country}</p>
@@ -396,10 +435,10 @@ export default function CompanyProfileDetail() {
                 </div>
               )}
 
-              {/* Contact phone */}
+              {/* Phone */}
               {profile.contact_phone && (
                 <div className="flex items-start gap-3">
-                  <Phone size={16} className="text-gray-400 mt-0.5 shrink-0" />
+                  <Phone size={15} className="text-gray-400 mt-0.5 shrink-0" />
                   <div>
                     <p className="text-xs text-gray-400 mb-0.5">Phone</p>
                     <p className="text-sm text-gray-800">{profile.contact_phone}</p>
@@ -407,12 +446,12 @@ export default function CompanyProfileDetail() {
                 </div>
               )}
 
-              {/* Contact emails */}
+              {/* Emails */}
               {profile.contact_emails && (
                 <div className="flex items-start gap-3">
-                  <Mail size={16} className="text-gray-400 mt-0.5 shrink-0" />
+                  <Mail size={15} className="text-gray-400 mt-0.5 shrink-0" />
                   <div className="flex-1">
-                    <p className="text-xs text-gray-400 mb-2">Email Addresses</p>
+                    <p className="text-xs text-gray-400 mb-1.5">Email Addresses</p>
                     <div className="flex flex-wrap gap-1.5">
                       {profile.contact_emails.split(',').map(e => e.trim()).filter(Boolean).map(email => (
                         <span key={email} className="text-xs bg-purple-50 text-purple-700 border border-purple-200 px-2 py-0.5 rounded-full">{email}</span>
@@ -426,18 +465,18 @@ export default function CompanyProfileDetail() {
 
               {/* Company accounts */}
               <div className="flex items-start gap-3">
-                <Landmark size={16} className="text-gray-400 mt-0.5 shrink-0" />
+                <Landmark size={15} className="text-gray-400 mt-0.5 shrink-0" />
                 <div className="flex-1">
-                  <p className="text-xs text-gray-400 mb-2">Company Accounts</p>
+                  <p className="text-xs text-gray-400 mb-1.5">Company Accounts</p>
                   <AccountPills raw={profile.company_active_accounts} />
                 </div>
               </div>
 
-              {/* Personal active accounts */}
+              {/* Personal accounts */}
               <div className="flex items-start gap-3">
-                <User size={16} className="text-gray-400 mt-0.5 shrink-0" />
+                <User size={15} className="text-gray-400 mt-0.5 shrink-0" />
                 <div className="flex-1">
-                  <p className="text-xs text-gray-400 mb-2">Personal Accounts (Owner)</p>
+                  <p className="text-xs text-gray-400 mb-1.5">Personal Accounts (Owner)</p>
                   <AccountPills raw={profile.personal_active_accounts} />
                 </div>
               </div>
@@ -453,10 +492,8 @@ export default function CompanyProfileDetail() {
               <p className="text-xs text-gray-400">{profile.buyers.length} linked</p>
             </div>
             {canEdit && (
-              <button
-                onClick={() => openAddParty('buyer')}
-                className="flex items-center gap-1 text-xs bg-blue-600 hover:bg-blue-700 text-white px-2.5 py-1.5 rounded-lg"
-              >
+              <button onClick={() => openAddParty('buyer')}
+                className="flex items-center gap-1 text-xs bg-blue-600 hover:bg-blue-700 text-white px-2.5 py-1.5 rounded-lg transition-colors">
                 <Plus size={12} /> Add
               </button>
             )}
@@ -479,22 +516,42 @@ export default function CompanyProfileDetail() {
               <h2 className="font-semibold text-gray-900">Edit Company Profile</h2>
               <button onClick={() => setEditMode(false)} className="text-gray-400 hover:text-gray-600"><X size={18} /></button>
             </div>
-            <div className="px-6 py-4 space-y-4">
-              <div className="grid grid-cols-2 gap-4">
+            <div className="px-6 py-5 space-y-4">
+              <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="block text-xs font-medium text-gray-600 mb-1">Company Name *</label>
                   <input value={editForm.company_name} onChange={e => setEditForm((f: any) => ({ ...f, company_name: e.target.value }))}
                     className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500" />
                 </div>
                 <div>
-                  <label className="block text-xs font-medium text-gray-600 mb-1">Category</label>
+                  <label className="block text-xs font-medium text-gray-600 mb-1">Tier</label>
                   <select value={editForm.category} onChange={e => setEditForm((f: any) => ({ ...f, category: e.target.value }))}
-                    className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500">
+                    className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white">
                     <option value="">— None —</option>
                     <option value="A">A</option><option value="B">B</option><option value="C">C</option>
                   </select>
                 </div>
               </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-medium text-gray-600 mb-1">Industry</label>
+                  <select value={industryEdit} onChange={e => setIndustryEdit(e.target.value)}
+                    className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white">
+                    <option value="">— None —</option>
+                    {categories.map(c => <option key={c} value={c}>{c}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-gray-600 mb-1">Country</label>
+                  <select value={editForm.country} onChange={e => setEditForm((f: any) => ({ ...f, country: e.target.value }))}
+                    className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white">
+                    <option value="">— Select —</option>
+                    {COUNTRIES.map(c => <option key={c} value={c}>{c}</option>)}
+                  </select>
+                </div>
+              </div>
+
               <div>
                 <label className="block text-xs font-medium text-gray-600 mb-1">Owner Name</label>
                 <input value={editForm.owner_name} onChange={e => setEditForm((f: any) => ({ ...f, owner_name: e.target.value }))}
@@ -510,36 +567,18 @@ export default function CompanyProfileDetail() {
                 <input type="number" value={editForm.turnover_aed} onChange={e => setEditForm((f: any) => ({ ...f, turnover_aed: e.target.value }))}
                   className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500" />
               </div>
+
+              <BankSelector label="Company Bank Accounts" banks={bankNames} selected={companyAccounts} onChange={setCompanyAccounts} />
+              <BankSelector label="Personal Bank Accounts (Owner)" banks={bankNames} selected={personalAccounts} onChange={setPersonalAccounts} />
+
               <div>
-                <label className="block text-xs font-medium text-gray-600 mb-1">Company Accounts</label>
-                <input value={editForm.company_active_accounts} onChange={e => setEditForm((f: any) => ({ ...f, company_active_accounts: e.target.value }))}
-                  placeholder="NBF, SIB, ADIB (comma separated)"
+                <label className="block text-xs font-medium text-gray-600 mb-1">Contact Phone</label>
+                <input value={editForm.contact_phone} onChange={e => setEditForm((f: any) => ({ ...f, contact_phone: e.target.value }))}
+                  placeholder="+971 50 000 0000"
                   className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500" />
               </div>
               <div>
-                <label className="block text-xs font-medium text-gray-600 mb-1">Personal Accounts</label>
-                <input value={editForm.personal_active_accounts} onChange={e => setEditForm((f: any) => ({ ...f, personal_active_accounts: e.target.value }))}
-                  placeholder="MASHREQ NEO, ENBD (comma separated)"
-                  className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500" />
-              </div>
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-xs font-medium text-gray-600 mb-1">Country</label>
-                  <select value={editForm.country} onChange={e => setEditForm((f: any) => ({ ...f, country: e.target.value }))}
-                    className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500">
-                    <option value="">— Select country —</option>
-                    {COUNTRIES.map(c => <option key={c} value={c}>{c}</option>)}
-                  </select>
-                </div>
-                <div>
-                  <label className="block text-xs font-medium text-gray-600 mb-1">Contact Phone</label>
-                  <input value={editForm.contact_phone} onChange={e => setEditForm((f: any) => ({ ...f, contact_phone: e.target.value }))}
-                    placeholder="+971 50 000 0000"
-                    className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500" />
-                </div>
-              </div>
-              <div>
-                <div className="flex items-center justify-between mb-1">
+                <div className="flex items-center justify-between mb-2">
                   <label className="text-xs font-medium text-gray-600">Email Addresses</label>
                   <button type="button" onClick={() => setEmailList(l => [...l, ''])}
                     className="text-xs text-blue-600 hover:text-blue-700 flex items-center gap-1">
@@ -549,39 +588,32 @@ export default function CompanyProfileDetail() {
                 <div className="space-y-2">
                   {emailList.map((email, i) => (
                     <div key={i} className="flex gap-2">
-                      <input
-                        value={email}
-                        onChange={e => setEmailList(l => l.map((v, j) => j === i ? e.target.value : v))}
+                      <input value={email} onChange={e => setEmailList(l => l.map((v, j) => j === i ? e.target.value : v))}
                         className="flex-1 text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
-                        placeholder="email@company.com"
-                        type="email"
-                      />
+                        placeholder="email@company.com" type="email" />
                       {emailList.length > 1 && (
                         <button type="button" onClick={() => setEmailList(l => l.filter((_, j) => j !== i))}
-                          className="p-2 text-gray-400 hover:text-red-500 rounded-lg hover:bg-red-50">
-                          <X size={14} />
-                        </button>
+                          className="p-2 text-gray-400 hover:text-red-500 rounded-lg hover:bg-red-50"><X size={14} /></button>
                       )}
                     </div>
                   ))}
                 </div>
               </div>
-              <div className="flex items-center gap-3">
+              <div className="flex items-center gap-3 pt-1">
                 <label className="text-xs font-medium text-gray-600">Status</label>
-                <button
-                  type="button"
-                  onClick={() => setEditForm((f: any) => ({ ...f, is_active: !f.is_active }))}
-                  className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${editForm.is_active ? 'bg-green-500' : 'bg-gray-300'}`}
-                >
+                <button type="button" onClick={() => setEditForm((f: any) => ({ ...f, is_active: !f.is_active }))}
+                  className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${editForm.is_active ? 'bg-green-500' : 'bg-gray-300'}`}>
                   <span className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white shadow transition-transform ${editForm.is_active ? 'translate-x-4' : 'translate-x-0.5'}`} />
                 </button>
-                <span className="text-xs text-gray-500">{editForm.is_active ? 'Active' : 'Inactive'}</span>
+                <span className={`text-xs font-medium ${editForm.is_active ? 'text-green-600' : 'text-gray-400'}`}>
+                  {editForm.is_active ? 'Active' : 'Inactive'}
+                </span>
               </div>
             </div>
             <div className="px-6 py-4 border-t border-gray-100 flex justify-end gap-3">
               <button onClick={() => setEditMode(false)} className="text-sm px-4 py-2 rounded-lg border border-gray-200 hover:bg-gray-50">Cancel</button>
               <button onClick={handleSaveEdit} disabled={saving}
-                className="text-sm px-4 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-50">
+                className="text-sm px-4 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-50 transition-colors">
                 {saving ? 'Saving…' : 'Save Changes'}
               </button>
             </div>
@@ -594,9 +626,7 @@ export default function CompanyProfileDetail() {
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
           <div className="bg-white rounded-xl shadow-xl w-full max-w-md">
             <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100">
-              <h2 className="font-semibold text-gray-900">
-                Add {partyModal === 'buyer' ? 'Buyer' : 'Supplier'}
-              </h2>
+              <h2 className="font-semibold text-gray-900">Add {partyModal === 'buyer' ? 'Buyer' : 'Supplier'}</h2>
               <button onClick={() => setPartyModal(null)} className="text-gray-400 hover:text-gray-600"><X size={18} /></button>
             </div>
             <div className="px-6 py-4 space-y-4">
@@ -609,7 +639,7 @@ export default function CompanyProfileDetail() {
               <div>
                 <label className="block text-xs font-medium text-gray-600 mb-1">Type</label>
                 <select value={partyForm.type} onChange={e => setPartyForm(f => ({ ...f, type: e.target.value }))}
-                  className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500">
+                  className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white">
                   <option value="buyer">Buyer</option>
                   <option value="supplier">Supplier</option>
                   <option value="both">Both</option>
@@ -629,7 +659,7 @@ export default function CompanyProfileDetail() {
               <div>
                 <label className="block text-xs font-medium text-gray-600 mb-1">Link to Company Profile (optional)</label>
                 <select value={partyForm.linked_company_id} onChange={e => setPartyForm(f => ({ ...f, linked_company_id: e.target.value }))}
-                  className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500">
+                  className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white">
                   <option value="">— Not linked —</option>
                   {allProfiles.filter(p => p.id !== profile.id).map(p => (
                     <option key={p.id} value={p.id}>{p.company_name}</option>
@@ -665,7 +695,7 @@ export default function CompanyProfileDetail() {
               <div>
                 <label className="block text-xs font-medium text-gray-600 mb-1">Type</label>
                 <select value={editPartyForm.type} onChange={e => setEditPartyForm(f => ({ ...f, type: e.target.value }))}
-                  className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500">
+                  className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white">
                   <option value="buyer">Buyer</option>
                   <option value="supplier">Supplier</option>
                   <option value="both">Both</option>
@@ -684,11 +714,9 @@ export default function CompanyProfileDetail() {
               <div>
                 <label className="block text-xs font-medium text-gray-600 mb-1">Link to Company Profile</label>
                 <select value={editPartyForm.linked_company_id} onChange={e => setEditPartyForm(f => ({ ...f, linked_company_id: e.target.value }))}
-                  className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500">
+                  className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white">
                   <option value="">— Not linked —</option>
-                  {allProfiles.map(p => (
-                    <option key={p.id} value={p.id}>{p.company_name}</option>
-                  ))}
+                  {allProfiles.map(p => <option key={p.id} value={p.id}>{p.company_name}</option>)}
                 </select>
               </div>
             </div>
