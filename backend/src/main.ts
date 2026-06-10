@@ -9,6 +9,7 @@ async function bootstrap() {
   app.enableCors({
     origin: [
       'https://accounting-app-frontend-mu.vercel.app',
+      'https://recon-ae.vercel.app',
       'http://localhost:3001',
     ],
     credentials: true,
