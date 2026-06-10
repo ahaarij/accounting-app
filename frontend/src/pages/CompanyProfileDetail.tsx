@@ -9,7 +9,7 @@ import {
 } from '../api';
 import {
   ArrowLeft, Pencil, X, Plus, Trash2, Link2, Building2,
-  MapPin, TrendingUp, Landmark, User,
+  MapPin, TrendingUp, Landmark, User, Globe, Phone, Mail,
 } from 'lucide-react';
 
 interface Party {
@@ -33,6 +33,10 @@ interface ProfileDetail {
   logo_path: string | null;
   company_active_accounts: string | null;
   personal_active_accounts: string | null;
+  country: string | null;
+  is_active: boolean;
+  contact_emails: string | null;
+  contact_phone: string | null;
   suppliers: Party[];
   buyers: Party[];
 }
@@ -112,6 +116,10 @@ export default function CompanyProfileDetail() {
       turnover_aed: profile.turnover_aed != null ? String(profile.turnover_aed) : '',
       company_active_accounts: profile.company_active_accounts ?? '',
       personal_active_accounts: profile.personal_active_accounts ?? '',
+      country: profile.country ?? '',
+      is_active: profile.is_active ?? true,
+      contact_emails: profile.contact_emails ?? '',
+      contact_phone: profile.contact_phone ?? '',
     });
     setEditMode(true);
   };
@@ -128,6 +136,10 @@ export default function CompanyProfileDetail() {
         turnover_aed: editForm.turnover_aed ? Number(editForm.turnover_aed) : undefined,
         company_active_accounts: editForm.company_active_accounts || undefined,
         personal_active_accounts: editForm.personal_active_accounts || undefined,
+        country: editForm.country || undefined,
+        is_active: editForm.is_active,
+        contact_emails: editForm.contact_emails || undefined,
+        contact_phone: editForm.contact_phone || undefined,
       });
       setEditMode(false);
       load();
@@ -316,12 +328,17 @@ export default function CompanyProfileDetail() {
               </div>
               <input ref={logoInputRef} type="file" accept="image/*" className="hidden" onChange={handleLogoChange} />
 
-              {/* Category badge */}
-              {profile.category && catStyle && (
-                <span className={`mt-3 text-xs font-semibold px-3 py-1 rounded-full border ${catStyle.bg} ${catStyle.text}`}>
-                  {catStyle.label}
+              {/* Category + active badges */}
+              <div className="mt-3 flex items-center gap-2 flex-wrap justify-center">
+                {profile.category && catStyle && (
+                  <span className={`text-xs font-semibold px-3 py-1 rounded-full border ${catStyle.bg} ${catStyle.text}`}>
+                    {catStyle.label}
+                  </span>
+                )}
+                <span className={`text-xs font-semibold px-3 py-1 rounded-full border ${profile.is_active ? 'bg-green-50 border-green-200 text-green-700' : 'bg-gray-100 border-gray-200 text-gray-500'}`}>
+                  {profile.is_active ? 'Active' : 'Inactive'}
                 </span>
-              )}
+              </div>
             </div>
 
             {/* Company name */}
@@ -364,11 +381,50 @@ export default function CompanyProfileDetail() {
 
               <hr className="border-gray-100" />
 
-              {/* Company active accounts */}
+              {/* Country */}
+              {profile.country && (
+                <div className="flex items-start gap-3">
+                  <Globe size={16} className="text-gray-400 mt-0.5 shrink-0" />
+                  <div>
+                    <p className="text-xs text-gray-400 mb-0.5">Country</p>
+                    <p className="text-sm text-gray-800">{profile.country}</p>
+                  </div>
+                </div>
+              )}
+
+              {/* Contact phone */}
+              {profile.contact_phone && (
+                <div className="flex items-start gap-3">
+                  <Phone size={16} className="text-gray-400 mt-0.5 shrink-0" />
+                  <div>
+                    <p className="text-xs text-gray-400 mb-0.5">Phone</p>
+                    <p className="text-sm text-gray-800">{profile.contact_phone}</p>
+                  </div>
+                </div>
+              )}
+
+              {/* Contact emails */}
+              {profile.contact_emails && (
+                <div className="flex items-start gap-3">
+                  <Mail size={16} className="text-gray-400 mt-0.5 shrink-0" />
+                  <div className="flex-1">
+                    <p className="text-xs text-gray-400 mb-2">Email Addresses</p>
+                    <div className="flex flex-wrap gap-1.5">
+                      {profile.contact_emails.split(',').map(e => e.trim()).filter(Boolean).map(email => (
+                        <span key={email} className="text-xs bg-purple-50 text-purple-700 border border-purple-200 px-2 py-0.5 rounded-full">{email}</span>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              <hr className="border-gray-100" />
+
+              {/* Company accounts */}
               <div className="flex items-start gap-3">
                 <Landmark size={16} className="text-gray-400 mt-0.5 shrink-0" />
                 <div className="flex-1">
-                  <p className="text-xs text-gray-400 mb-2">Company Active Accounts</p>
+                  <p className="text-xs text-gray-400 mb-2">Company Accounts</p>
                   <AccountPills raw={profile.company_active_accounts} />
                 </div>
               </div>
@@ -451,7 +507,7 @@ export default function CompanyProfileDetail() {
                   className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500" />
               </div>
               <div>
-                <label className="block text-xs font-medium text-gray-600 mb-1">Company Active Accounts</label>
+                <label className="block text-xs font-medium text-gray-600 mb-1">Company Accounts</label>
                 <input value={editForm.company_active_accounts} onChange={e => setEditForm((f: any) => ({ ...f, company_active_accounts: e.target.value }))}
                   placeholder="NBF, SIB, ADIB (comma separated)"
                   className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500" />
@@ -461,6 +517,37 @@ export default function CompanyProfileDetail() {
                 <input value={editForm.personal_active_accounts} onChange={e => setEditForm((f: any) => ({ ...f, personal_active_accounts: e.target.value }))}
                   placeholder="MASHREQ NEO, ENBD (comma separated)"
                   className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500" />
+              </div>
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-xs font-medium text-gray-600 mb-1">Country</label>
+                  <input value={editForm.country} onChange={e => setEditForm((f: any) => ({ ...f, country: e.target.value }))}
+                    placeholder="e.g. UAE, Hong Kong"
+                    className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-gray-600 mb-1">Contact Phone</label>
+                  <input value={editForm.contact_phone} onChange={e => setEditForm((f: any) => ({ ...f, contact_phone: e.target.value }))}
+                    placeholder="+971 50 000 0000"
+                    className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                </div>
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-gray-600 mb-1">Email Addresses (comma separated)</label>
+                <input value={editForm.contact_emails} onChange={e => setEditForm((f: any) => ({ ...f, contact_emails: e.target.value }))}
+                  placeholder="info@company.com, accounts@company.com"
+                  className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500" />
+              </div>
+              <div className="flex items-center gap-3">
+                <label className="text-xs font-medium text-gray-600">Status</label>
+                <button
+                  type="button"
+                  onClick={() => setEditForm((f: any) => ({ ...f, is_active: !f.is_active }))}
+                  className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${editForm.is_active ? 'bg-green-500' : 'bg-gray-300'}`}
+                >
+                  <span className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white shadow transition-transform ${editForm.is_active ? 'translate-x-4' : 'translate-x-0.5'}`} />
+                </button>
+                <span className="text-xs text-gray-500">{editForm.is_active ? 'Active' : 'Inactive'}</span>
               </div>
             </div>
             <div className="px-6 py-4 border-t border-gray-100 flex justify-end gap-3">

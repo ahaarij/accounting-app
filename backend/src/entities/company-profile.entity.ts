@@ -33,6 +33,18 @@ export class CompanyProfile {
   @Column({ type: 'text', nullable: true })
   personal_active_accounts: string;
 
+  @Column({ type: 'varchar', length: 100, nullable: true })
+  country: string;
+
+  @Column({ type: 'boolean', default: true })
+  is_active: boolean;
+
+  @Column({ type: 'text', nullable: true })
+  contact_emails: string;
+
+  @Column({ type: 'varchar', length: 50, nullable: true })
+  contact_phone: string;
+
   @CreateDateColumn()
   created_at: Date;
 

@@ -18,6 +18,10 @@ interface CompanyProfile {
   logo_path: string | null;
   company_active_accounts: string;
   personal_active_accounts: string;
+  country: string | null;
+  is_active: boolean;
+  contact_emails: string | null;
+  contact_phone: string | null;
 }
 
 const CATEGORY_STYLES: Record<string, string> = {
@@ -52,6 +56,7 @@ function AccountPills({ raw }: { raw: string }) {
 const EMPTY_FORM = {
   category: '', company_name: '', owner_name: '', address: '',
   turnover_aed: '', company_active_accounts: '', personal_active_accounts: '',
+  country: '', is_active: true, contact_emails: '', contact_phone: '',
 };
 
 export default function CompanyProfiles() {
@@ -63,6 +68,8 @@ export default function CompanyProfiles() {
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [catFilter, setCatFilter] = useState('');
+  const [countryFilter, setCountryFilter] = useState('');
+  const [activeFilter, setActiveFilter] = useState<'' | 'active' | 'inactive'>('');
   const [showModal, setShowModal] = useState(false);
   const [editing, setEditing] = useState<CompanyProfile | null>(null);
   const [form, setForm] = useState({ ...EMPTY_FORM });
@@ -93,6 +100,10 @@ export default function CompanyProfiles() {
       turnover_aed: p.turnover_aed != null ? String(p.turnover_aed) : '',
       company_active_accounts: p.company_active_accounts ?? '',
       personal_active_accounts: p.personal_active_accounts ?? '',
+      country: p.country ?? '',
+      is_active: p.is_active ?? true,
+      contact_emails: p.contact_emails ?? '',
+      contact_phone: p.contact_phone ?? '',
     });
     setShowModal(true);
   };
@@ -109,6 +120,10 @@ export default function CompanyProfiles() {
         turnover_aed: form.turnover_aed ? Number(form.turnover_aed) : undefined,
         company_active_accounts: form.company_active_accounts.trim() || undefined,
         personal_active_accounts: form.personal_active_accounts.trim() || undefined,
+        country: form.country.trim() || undefined,
+        is_active: form.is_active,
+        contact_emails: form.contact_emails.trim() || undefined,
+        contact_phone: form.contact_phone.trim() || undefined,
       };
       if (editing) {
         await updateCompanyProfile(editing.id, dto);
@@ -129,11 +144,15 @@ export default function CompanyProfiles() {
     load();
   };
 
+  const countries = Array.from(new Set(profiles.map(p => p.country).filter(Boolean) as string[])).sort();
+
   const visible = profiles.filter(p => {
     const q = search.toLowerCase();
     const matchSearch = !q || p.company_name.toLowerCase().includes(q) || (p.owner_name ?? '').toLowerCase().includes(q);
     const matchCat = !catFilter || p.category === catFilter;
-    return matchSearch && matchCat;
+    const matchCountry = !countryFilter || p.country === countryFilter;
+    const matchActive = !activeFilter || (activeFilter === 'active' ? p.is_active : !p.is_active);
+    return matchSearch && matchCat && matchCountry && matchActive;
   });
 
   return (
@@ -151,8 +170,8 @@ export default function CompanyProfiles() {
       />
 
       {/* Filters */}
-      <div className="px-8 py-4 bg-white border-b border-gray-100 flex items-center gap-3">
-        <div className="relative flex-1 max-w-xs">
+      <div className="px-8 py-4 bg-white border-b border-gray-100 flex items-center gap-3 flex-wrap">
+        <div className="relative flex-1 min-w-[180px] max-w-xs">
           <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
           <input
             value={search}
@@ -174,6 +193,25 @@ export default function CompanyProfiles() {
             </button>
           ))}
         </div>
+        {countries.length > 0 && (
+          <select
+            value={countryFilter}
+            onChange={e => setCountryFilter(e.target.value)}
+            className="text-sm border border-gray-200 rounded-lg px-3 py-1.5 focus:outline-none focus:ring-2 focus:ring-blue-500"
+          >
+            <option value="">All countries</option>
+            {countries.map(c => <option key={c} value={c}>{c}</option>)}
+          </select>
+        )}
+        <select
+          value={activeFilter}
+          onChange={e => setActiveFilter(e.target.value as '' | 'active' | 'inactive')}
+          className="text-sm border border-gray-200 rounded-lg px-3 py-1.5 focus:outline-none focus:ring-2 focus:ring-blue-500"
+        >
+          <option value="">Active &amp; Inactive</option>
+          <option value="active">Active only</option>
+          <option value="inactive">Inactive only</option>
+        </select>
         <span className="text-sm text-gray-400 ml-auto">{visible.length} shown</span>
       </div>
 
@@ -229,8 +267,16 @@ export default function CompanyProfiles() {
                   {p.company_name}
                 </h3>
                 {p.owner_name && (
-                  <p className="text-xs text-gray-500 mb-3 truncate">{p.owner_name}</p>
+                  <p className="text-xs text-gray-500 truncate">{p.owner_name}</p>
                 )}
+                <div className="flex items-center gap-1.5 mt-1 mb-2">
+                  {!p.is_active && (
+                    <span className="text-xs px-2 py-0.5 rounded-full bg-gray-100 text-gray-500 border border-gray-200">Inactive</span>
+                  )}
+                  {p.country && (
+                    <span className="text-xs text-gray-400">{p.country}</span>
+                  )}
+                </div>
 
                 {/* Company accounts */}
                 {p.company_active_accounts && (
@@ -331,6 +377,46 @@ export default function CompanyProfiles() {
                   className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
                   placeholder="MASHREQ NEO, ENBD (comma separated)"
                 />
+              </div>
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-xs font-medium text-gray-600 mb-1">Country</label>
+                  <input
+                    value={form.country}
+                    onChange={e => setForm(f => ({ ...f, country: e.target.value }))}
+                    className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    placeholder="e.g. UAE, Hong Kong"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-gray-600 mb-1">Contact Phone</label>
+                  <input
+                    value={form.contact_phone}
+                    onChange={e => setForm(f => ({ ...f, contact_phone: e.target.value }))}
+                    className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    placeholder="+971 50 000 0000"
+                  />
+                </div>
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-gray-600 mb-1">Email Addresses (comma separated)</label>
+                <input
+                  value={form.contact_emails}
+                  onChange={e => setForm(f => ({ ...f, contact_emails: e.target.value }))}
+                  className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  placeholder="info@company.com, accounts@company.com"
+                />
+              </div>
+              <div className="flex items-center gap-3">
+                <label className="text-xs font-medium text-gray-600">Status</label>
+                <button
+                  type="button"
+                  onClick={() => setForm(f => ({ ...f, is_active: !f.is_active }))}
+                  className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${form.is_active ? 'bg-green-500' : 'bg-gray-300'}`}
+                >
+                  <span className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white shadow transition-transform ${form.is_active ? 'translate-x-4' : 'translate-x-0.5'}`} />
+                </button>
+                <span className="text-xs text-gray-500">{form.is_active ? 'Active' : 'Inactive'}</span>
               </div>
             </div>
             <div className="px-6 py-4 border-t border-gray-100 flex justify-end gap-3">
