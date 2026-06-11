@@ -60,8 +60,10 @@ export class CashDepositsService {
     const rows: object[] = [];
 
     for (const company of companies) {
+      if (!company.is_active) continue;
       const allAccounts = parseAccounts(company.company_active_accounts);
-      const accountList = allAccounts.length > 0 ? allAccounts : [null];
+      if (allAccounts.length === 0) continue;
+      const accountList = allAccounts;
 
       for (const account of accountList) {
         const k = rowKey(company.id, account);

@@ -31,7 +31,13 @@ export class CompanyProfile {
   company_active_accounts: string;
 
   @Column({ type: 'text', nullable: true })
+  company_inactive_accounts: string;
+
+  @Column({ type: 'text', nullable: true })
   personal_active_accounts: string;
+
+  @Column({ type: 'text', nullable: true })
+  personal_inactive_accounts: string;
 
   @Column({ type: 'varchar', length: 100, nullable: true })
   country: string;

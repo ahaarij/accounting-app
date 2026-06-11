@@ -165,7 +165,8 @@ export const createCompanyProfile = (dto: {
 export const updateCompanyProfile = (id: number, dto: Partial<{
   category: string; company_name: string; owner_name: string;
   address: string; turnover_aed: number;
-  company_active_accounts: string; personal_active_accounts: string;
+  company_active_accounts: string; company_inactive_accounts: string;
+  personal_active_accounts: string; personal_inactive_accounts: string;
   country: string; is_active: boolean;
   contact_emails: string; contact_phone: string; industry: string;
 }>) => api.patch(`/company-profiles/${id}`, dto);

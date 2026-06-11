@@ -5,7 +5,7 @@ import { Card, CardHeader, CardBody } from '../components/ui/card';
 import { Badge } from '../components/ui/badge';
 import { getSummary, getFlags, getBankAccounts, getNetPosition } from '../api';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from 'recharts';
-import { AlertTriangle, CheckCircle, XCircle, ChevronRight, Landmark, Building2 } from 'lucide-react';
+import { AlertTriangle, CheckCircle, XCircle, ChevronRight, Landmark, Building2, X } from 'lucide-react';
 import { fetchCashDeposits } from '../api/cashDeposits';
 
 const FLAG_DESTINATIONS: Record<string, string> = {
@@ -160,6 +160,8 @@ export default function Dashboard() {
   const [depositMonth, setDepositMonth]       = useState(currentMonthStr());
   const [depositChartData, setDepositChartData] = useState<{ labels: string[]; data: number[] } | null>(null);
   const [depositChartLoading, setDepositChartLoading] = useState(true);
+  const [depositRawRows, setDepositRawRows]   = useState<any[]>([]);
+  const [selectedDepositDay, setSelectedDepositDay] = useState<string | null>(null);
 
   useEffect(() => {
     Promise.all([getSummary(), getFlags(undefined, false), getBankAccounts()])
@@ -184,7 +186,11 @@ export default function Dashboard() {
     setDepositChartLoading(true);
     const { from, to } = getMonthRange(depositMonth);
     fetchCashDeposits(from, to)
-      .then((data: any) => setDepositChartData(buildDailyTotals(depositMonth, to, data.rows || [])))
+      .then((data: any) => {
+        const rows = (data.rows || []).filter((r: any) => r.bank_account !== null);
+        setDepositRawRows(rows);
+        setDepositChartData(buildDailyTotals(depositMonth, to, rows));
+      })
       .finally(() => setDepositChartLoading(false));
   }, [depositMonth]);
 
@@ -242,6 +248,28 @@ export default function Dashboard() {
     });
     return Object.values(groups).sort((a, b) => b.aed - a.aed);
   }, [accounts]);
+
+  const depositSummary = useMemo(() => {
+    const byCompany: Record<number, { monthly_limit: number; total: number }> = {};
+    depositRawRows.forEach((row: any) => {
+      if (!byCompany[row.company_id]) byCompany[row.company_id] = { monthly_limit: row.monthly_limit || 0, total: 0 };
+      byCompany[row.company_id].total += Number(row.total_deposits || 0);
+    });
+    const totalDeposited = Object.values(byCompany).reduce((s, c) => s + c.total, 0);
+    const available      = Object.values(byCompany).reduce((s, c) => s + Math.max(0, c.monthly_limit - c.total), 0);
+    return { totalDeposited, available };
+  }, [depositRawRows]);
+
+  const depositDayIndex = useMemo(() => {
+    const idx: Record<string, Array<{ company_name: string; bank_account: string; category: string | null; amount: number; description: string }>> = {};
+    depositRawRows.forEach((row: any) => {
+      (row.deposits || []).forEach((d: any) => {
+        if (!idx[d.date]) idx[d.date] = [];
+        idx[d.date].push({ company_name: row.company_name, bank_account: row.bank_account, category: row.category, amount: Number(d.amount), description: d.description || '' });
+      });
+    });
+    return idx;
+  }, [depositRawRows]);
 
   const criticalCount = flags.filter(f => f.severity === 'critical').length;
   const warningCount  = flags.filter(f => f.severity === 'warning').length;
@@ -393,7 +421,16 @@ export default function Dashboard() {
         <Card>
           <CardHeader>
             <div className="flex items-center justify-between">
-              <p className="font-medium text-gray-900 text-sm">Daily Cash Deposits</p>
+              <div className="flex items-center gap-4">
+                <p className="font-medium text-gray-900 text-sm">Daily Cash Deposits</p>
+                {!depositChartLoading && depositRawRows.length > 0 && (
+                  <div className="flex items-center gap-3 text-[11px]">
+                    <span className="text-gray-400">Deposited: <span className="font-mono font-semibold text-emerald-600">AED {depositSummary.totalDeposited >= 1_000_000 ? `${(depositSummary.totalDeposited / 1_000_000).toFixed(2)}M` : `${Math.round(depositSummary.totalDeposited / 1000)}K`}</span></span>
+                    <span className="text-gray-200">|</span>
+                    <span className="text-gray-400">Available: <span className="font-mono font-semibold text-blue-600">AED {depositSummary.available >= 1_000_000 ? `${(depositSummary.available / 1_000_000).toFixed(2)}M` : `${Math.round(depositSummary.available / 1000)}K`}</span></span>
+                  </div>
+                )}
+              </div>
               <MonthPicker value={depositMonth} onChange={setDepositMonth} />
             </div>
           </CardHeader>
@@ -411,11 +448,18 @@ export default function Dashboard() {
                 <LineChart
                   data={depositChartData.labels.map((label, i) => ({ day: label, AED: depositChartData!.data[i] }))}
                   margin={{ top: 4, right: 16, left: 0, bottom: 0 }}
+                  onClick={(e: any) => {
+                    if (e?.activePayload?.[0]?.payload?.AED > 0) {
+                      const day = String(e.activePayload[0].payload.day).padStart(2, '0');
+                      setSelectedDepositDay(`${depositMonth}-${day}`);
+                    }
+                  }}
+                  style={{ cursor: 'pointer' }}
                 >
                   <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
                   <XAxis dataKey="day" tick={{ fontSize: 11 }} />
                   <YAxis tick={{ fontSize: 11 }} tickFormatter={v => v >= 1_000_000 ? `${(v / 1_000_000).toFixed(1)}M` : v >= 1_000 ? `${Math.round(v / 1_000)}K` : String(v)} width={60} />
-                  <Tooltip formatter={(v) => [`AED ${Number(v).toLocaleString('en-AE', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`, 'Deposited']} />
+                  <Tooltip content={(props: any) => <DepositTooltip {...props} depositMonth={depositMonth} onViewDetails={setSelectedDepositDay} />} />
                   <Line type="monotone" dataKey="AED" stroke="#059669" strokeWidth={2} dot={{ r: 3 }} activeDot={{ r: 5 }} />
                 </LineChart>
               </ResponsiveContainer>
@@ -604,7 +648,109 @@ export default function Dashboard() {
           </Card>
         </div>
       </div>
+
+      {selectedDepositDay && (
+        <DepositDayModal
+          date={selectedDepositDay}
+          entries={depositDayIndex[selectedDepositDay] || []}
+          onClose={() => setSelectedDepositDay(null)}
+        />
+      )}
     </Layout>
+  );
+}
+
+function DepositTooltip({ active, payload, label, depositMonth, onViewDetails }: any) {
+  if (!active || !payload?.length) return null;
+  const amount: number = payload[0]?.value ?? 0;
+  const dateStr = `${depositMonth}-${String(label).padStart(2, '0')}`;
+  return (
+    <div className="bg-white border border-gray-200 rounded-lg shadow-lg p-3 min-w-[140px]" style={{ pointerEvents: 'all' }}>
+      <p className="text-[11px] font-semibold text-gray-500 mb-1">Day {label}</p>
+      <p className="text-sm font-mono font-bold text-emerald-600">
+        AED {amount.toLocaleString('en-AE', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}
+      </p>
+      {amount > 0 && (
+        <button
+          onMouseDown={(e) => { e.stopPropagation(); onViewDetails(dateStr); }}
+          className="mt-2 flex items-center gap-1 text-[11px] font-medium text-blue-600 hover:text-blue-700"
+        >
+          See details <ChevronRight size={11} />
+        </button>
+      )}
+    </div>
+  );
+}
+
+function DepositDayModal({ date, entries, onClose }: {
+  date: string;
+  entries: Array<{ company_name: string; bank_account: string; category: string | null; amount: number; description: string }>;
+  onClose: () => void;
+}) {
+  const total = entries.reduce((s, e) => s + e.amount, 0);
+  const [y, m, d] = date.split('-');
+  const label = `${parseInt(d)} ${['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][parseInt(m) - 1]} ${y}`;
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40" onMouseDown={onClose}>
+      <div className="bg-white rounded-xl shadow-2xl w-full max-w-xl mx-4 overflow-hidden" onMouseDown={e => e.stopPropagation()}>
+        <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100">
+          <div>
+            <p className="font-semibold text-gray-900 text-sm">Cash Deposits — {label}</p>
+            <p className="text-xs text-gray-400 mt-0.5">{entries.length} deposit{entries.length !== 1 ? 's' : ''} · AED {total.toLocaleString('en-AE', { minimumFractionDigits: 0, maximumFractionDigits: 0 })} total</p>
+          </div>
+          <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-gray-100 text-gray-400 hover:text-gray-600 transition-colors">
+            <X size={16} />
+          </button>
+        </div>
+        {entries.length === 0 ? (
+          <div className="px-5 py-10 text-center text-sm text-gray-400">No deposit data available</div>
+        ) : (
+          <div className="overflow-y-auto max-h-[60vh]">
+            <table className="w-full text-xs">
+              <thead className="sticky top-0 bg-gray-50 border-b border-gray-100">
+                <tr>
+                  <th className="text-left px-5 py-2.5 font-medium text-gray-500">Company</th>
+                  <th className="text-left px-3 py-2.5 font-medium text-gray-500">Bank Account</th>
+                  <th className="text-left px-3 py-2.5 font-medium text-gray-500">Cat</th>
+                  <th className="text-left px-3 py-2.5 font-medium text-gray-500">Description</th>
+                  <th className="text-right px-5 py-2.5 font-medium text-gray-500">Amount</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-50">
+                {entries.map((e, i) => (
+                  <tr key={i} className="hover:bg-gray-50">
+                    <td className="px-5 py-2.5 font-medium text-gray-800 max-w-[130px] truncate" title={e.company_name}>{e.company_name}</td>
+                    <td className="px-3 py-2.5 text-gray-500 max-w-[110px] truncate" title={e.bank_account}>{e.bank_account || '—'}</td>
+                    <td className="px-3 py-2.5">
+                      {e.category ? (
+                        <span className={`font-bold px-1.5 py-0.5 rounded text-[10px] ${
+                          e.category === 'C' ? 'bg-purple-100 text-purple-700' :
+                          e.category === 'B' ? 'bg-blue-100 text-blue-700' :
+                          'bg-gray-100 text-gray-600'
+                        }`}>{e.category}</span>
+                      ) : '—'}
+                    </td>
+                    <td className="px-3 py-2.5 text-gray-400 max-w-[100px] truncate" title={e.description}>{e.description || '—'}</td>
+                    <td className="px-5 py-2.5 text-right font-mono font-semibold text-emerald-600">
+                      {e.amount.toLocaleString('en-AE', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+              <tfoot className="border-t-2 border-gray-200 bg-gray-50">
+                <tr>
+                  <td colSpan={4} className="px-5 py-2.5 font-semibold text-gray-500">Total</td>
+                  <td className="px-5 py-2.5 text-right font-mono font-bold text-emerald-700">
+                    {total.toLocaleString('en-AE', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}
+                  </td>
+                </tr>
+              </tfoot>
+            </table>
+          </div>
+        )}
+      </div>
+    </div>
   );
 }
 

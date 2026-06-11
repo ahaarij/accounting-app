@@ -1,37 +1,54 @@
-# Session Status — 2026-06-10
+# Session Status — 2026-06-11 (Session 2)
 
-## Last completed: Cash Deposits Tracker redesign + logic overhaul
+## Last completed: Dashboard graph improvements, bank account statuses, cash tracker fixes
 
 ### What was done this session
-1. **Cash Tracker full redesign** (`frontend/src/pages/CashDepositsTracker.tsx`)
-   - Polished UI: stat cards, utilization progress bars, colored left-border status accents
-   - Company-wide limits: rows grouped into `CompanyGroup` (sum all accounts vs one monthly limit)
-   - New sort: C→B→A→null, then most available capacity, then account count, then oldest tx
-   - Last transaction date shown per company row
-   - Category filter (All/C/B/A) + month-only date picker (same MonthPicker as Dashboard)
-   - Large Deposit Planner: account rotation (unused first, then lowest volume)
-   - Companies without bank accounts hidden; By Bank/Owner/Brand tabs hidden (code kept)
-   - Build: clean
 
-2. **Company Profiles** (frontend/src/pages/CompanyProfiles.tsx + CompanyProfileDetail.tsx)
-   - Added: country, is_active, contact_emails (CSV), contact_phone fields
-   - Dynamic per-field email list UI; country dropdown from frontend/src/lib/countries.ts
-   - Active/inactive filter + country filter on grid page
-   - Migration 1000000000011-CompanyProfileExtras.ts applied manually via docker psql
+1. **CORS fix** — added `recon-ae.vercel.app` to backend CORS whitelist (committed + pushed)
 
-3. **Version**: v1.02 (Layout.tsx)
+2. **Dashboard — Daily Cash Deposits graph**
+   - Custom tooltip with "See details →" button on hover
+   - Click any bar → day detail modal (company, bank account, category, amount, description)
+   - Graph title now shows inline: `Deposited: AED X.XXM` + `Available: AED X.XXM`
+   - Fixed double-counting bug: null-bank-account rows now filtered before processing
+   - Fixed available capacity formula: per-company capping before summing (matches CashDepositsTracker)
+
+3. **Bank account active/inactive status** (full stack)
+   - New DB columns: `company_inactive_accounts TEXT`, `personal_inactive_accounts TEXT`
+   - Migration file: `1000000000013-AddInactiveAccounts.ts` — **applied locally via docker psql**
+   - **Prod Railway SQL still needed**: `ALTER TABLE company_profiles ADD COLUMN IF NOT EXISTS company_inactive_accounts TEXT DEFAULT NULL; ALTER TABLE company_profiles ADD COLUMN IF NOT EXISTS personal_inactive_accounts TEXT DEFAULT NULL;`
+   - Backend entity + service updated for both new fields
+   - `CompanyProfileDetail.tsx`: `AccountPillsWithStatus` (green=active, red=inactive) + `BankStatusSelector` (3-state click cycle)
+   - `CompanyProfiles.tsx` grid: cards show green/red pills + edit modal uses same `BankStatusSelector`
+   - API types in `frontend/src/api/index.ts` updated
+
+4. **Cash Deposits Tracker filtering** (`cash-deposits.service.ts`)
+   - Inactive companies (`is_active=false`) → excluded entirely
+   - Companies with no active bank accounts → excluded entirely
+   - Removed `[null]` fallback row — permanently fixes double-counting root cause
+
+5. **Cash Deposits summary cards** — now react to category filter (use `sortedGroups` not `companyGroups`)
+
+6. **Custom date range fix** — clicking "Custom" now commits both pickers to current month immediately; was showing visual default without setting state, causing no data to load
 
 ---
 
-## Next task: Company Profiles improvements
+## NOT YET committed or pushed
+All changes above are local only. Commit + push everything together next session.
 
-The boss said the company profile pages need work. Exact requirements TBD by user.
+## Key files changed this session
+- `backend/src/main.ts` — CORS (already pushed separately)
+- `frontend/src/pages/Dashboard.tsx` — graph tooltip, day modal, summary stats, null-row filter
+- `frontend/src/pages/CompanyProfileDetail.tsx` — AccountPillsWithStatus, BankStatusSelector
+- `frontend/src/pages/CompanyProfiles.tsx` — BankStatusSelector, BankPills with status
+- `frontend/src/api/index.ts` — new fields in updateCompanyProfile type
+- `backend/src/entities/company-profile.entity.ts` — 2 new columns
+- `backend/src/companies/companies.service.ts` — new fields in DTOs
+- `backend/src/database/migrations/1000000000013-AddInactiveAccounts.ts` — new migration (NOT run via CLI, applied manually)
+- `backend/src/cash-deposits/cash-deposits.service.ts` — inactive/no-account company filtering
 
-Key files:
-- frontend/src/pages/CompanyProfiles.tsx — grid/list page at /company-profiles
-- frontend/src/pages/CompanyProfileDetail.tsx — detail page at /company-profiles/:id
-- backend/src/companies/companies.service.ts — CRUD
-- backend/src/entities/company-profile.entity.ts — has: id, category, company_name, owner_name, address, turnover_aed, company_active_accounts, personal_active_accounts, country, is_active, contact_emails, contact_phone, logo_url
-
-No backend migration needed unless new DB columns required.
-Never git push without being asked.
+## Rules
+- Never git push without being asked
+- No GSD workflow — build directly
+- Run builds directly: `cd frontend && pnpm run build`
+- Prod Railway migration SQL needed before pushing backend (see item 3 above)

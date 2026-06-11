@@ -753,11 +753,11 @@ export default function CashDepositsTracker() {
   }, [companyGroups, catFilter, sortCol, sortDir]);
 
   const stats = useMemo(() => ({
-    total: companyGroups.reduce((s, g) => s + g.total_deposits, 0),
-    exceeded: companyGroups.filter((g) => getGroupLimitStatus(g) === 'exceeded').length,
-    warning: companyGroups.filter((g) => getGroupLimitStatus(g) === 'warning').length,
-    capacity: companyGroups.reduce((s, g) => s + Math.max(0, g.monthly_limit - g.total_deposits), 0),
-  }), [companyGroups]);
+    total: sortedGroups.reduce((s, g) => s + g.total_deposits, 0),
+    exceeded: sortedGroups.filter((g) => getGroupLimitStatus(g) === 'exceeded').length,
+    warning: sortedGroups.filter((g) => getGroupLimitStatus(g) === 'warning').length,
+    capacity: sortedGroups.reduce((s, g) => s + Math.max(0, g.monthly_limit - g.total_deposits), 0),
+  }), [sortedGroups]);
 
   function toggleSet<T>(prev: Set<T>, val: T): Set<T> {
     const next = new Set(prev);
@@ -1011,16 +1011,20 @@ export default function CashDepositsTracker() {
                   dateMode === 'current_month' ? 'bg-blue-600 text-white' : 'text-gray-500 hover:text-gray-700 hover:bg-gray-50')}>
                 This Month
               </button>
-              <button onClick={() => setDateMode('custom')}
+              <button onClick={() => {
+                  setDateMode('custom');
+                  if (!fromMonth) setFromMonth(currentMonthStr());
+                  if (!toMonth) setToMonth(currentMonthStr());
+                }}
                 className={cn('px-3 py-1.5 text-xs font-semibold rounded-lg transition-all',
                   dateMode === 'custom' ? 'bg-blue-600 text-white' : 'text-gray-500 hover:text-gray-700 hover:bg-gray-50')}>
                 Custom
               </button>
               {dateMode === 'custom' && (
                 <div className="flex items-center gap-2 ml-2 pl-2 border-l border-gray-100">
-                  <MonthPicker value={fromMonth || currentMonthStr()} onChange={setFromMonth} />
+                  <MonthPicker value={fromMonth} onChange={setFromMonth} />
                   <span className="text-gray-300 text-xs">→</span>
-                  <MonthPicker value={toMonth || currentMonthStr()} onChange={setToMonth} />
+                  <MonthPicker value={toMonth} onChange={setToMonth} />
                 </div>
               )}
             </div>

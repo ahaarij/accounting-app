@@ -45,7 +45,9 @@ interface ProfileDetail {
   turnover_aed: number | null;
   logo_path: string | null;
   company_active_accounts: string | null;
+  company_inactive_accounts: string | null;
   personal_active_accounts: string | null;
+  personal_inactive_accounts: string | null;
   country: string | null;
   is_active: boolean;
   contact_emails: string | null;
@@ -61,46 +63,104 @@ const TIER_STYLES: Record<string, { bg: string; text: string; label: string }> =
   C: { bg: 'bg-slate-50 border-slate-200', text: 'text-slate-700', label: 'Tier C' },
 };
 
-function AccountPills({ raw }: { raw: string | null }) {
-  const accounts = raw ? raw.split(',').map(s => s.trim()).filter(Boolean) : [];
-  if (!accounts.length) return <span className="text-gray-400 text-xs italic">None recorded</span>;
+function AccountPillsWithStatus({ active, inactive }: { active: string | null; inactive: string | null }) {
+  const activeList   = active   ? active.split(',').map(s => s.trim()).filter(Boolean)   : [];
+  const inactiveList = inactive ? inactive.split(',').map(s => s.trim()).filter(Boolean) : [];
+  if (!activeList.length && !inactiveList.length)
+    return <span className="text-gray-400 text-xs italic">None recorded</span>;
   return (
-    <div className="flex flex-wrap gap-1.5">
-      {accounts.map(a => (
-        <span key={a} className="text-xs bg-blue-50 text-blue-700 border border-blue-200 px-2 py-0.5 rounded-full">{a}</span>
-      ))}
+    <div className="space-y-2">
+      {activeList.length > 0 && (
+        <div className="flex flex-wrap gap-1.5">
+          {activeList.map(a => (
+            <span key={a} className="inline-flex items-center gap-1.5 text-xs bg-green-50 text-green-700 border border-green-200 px-2.5 py-1 rounded-full font-medium">
+              <span className="w-1.5 h-1.5 rounded-full bg-green-500 shrink-0" />{a}
+            </span>
+          ))}
+        </div>
+      )}
+      {inactiveList.length > 0 && (
+        <>
+          {activeList.length > 0 && <div className="border-t border-gray-100" />}
+          <div className="flex flex-wrap gap-1.5">
+            {inactiveList.map(a => (
+              <span key={a} className="inline-flex items-center gap-1.5 text-xs bg-red-50 text-red-500 border border-red-200 px-2.5 py-1 rounded-full">
+                <span className="w-1.5 h-1.5 rounded-full bg-red-400 shrink-0" />{a}
+              </span>
+            ))}
+          </div>
+        </>
+      )}
     </div>
   );
 }
 
-function BankSelector({ label, banks, selected, onChange }: {
-  label: string; banks: string[]; selected: string[]; onChange: (s: string[]) => void;
+type AccountStatus = 'active' | 'inactive' | 'none';
+
+function BankStatusSelector({ label, banks, activeAccounts, inactiveAccounts, onChangeActive, onChangeInactive }: {
+  label: string; banks: string[];
+  activeAccounts: string[]; inactiveAccounts: string[];
+  onChangeActive: (a: string[]) => void; onChangeInactive: (a: string[]) => void;
 }) {
-  const toggle = (b: string) => onChange(selected.includes(b) ? selected.filter(x => x !== b) : [...selected, b]);
+  function getStatus(b: string): AccountStatus {
+    if (activeAccounts.includes(b)) return 'active';
+    if (inactiveAccounts.includes(b)) return 'inactive';
+    return 'none';
+  }
+  function cycle(b: string) {
+    const s = getStatus(b);
+    if (s === 'none') {
+      onChangeActive([...activeAccounts, b]);
+      onChangeInactive(inactiveAccounts.filter(x => x !== b));
+    } else if (s === 'active') {
+      onChangeActive(activeAccounts.filter(x => x !== b));
+      onChangeInactive([...inactiveAccounts, b]);
+    } else {
+      onChangeActive(activeAccounts.filter(x => x !== b));
+      onChangeInactive(inactiveAccounts.filter(x => x !== b));
+    }
+  }
   return (
     <div>
       <div className="flex items-center justify-between mb-2">
         <label className="text-xs font-medium text-gray-600">{label}</label>
-        {selected.length > 0 && <span className="text-xs text-blue-600 font-medium">{selected.length} selected</span>}
+        <div className="flex items-center gap-2.5 text-[11px]">
+          {activeAccounts.length > 0 && (
+            <span className="flex items-center gap-1 text-green-600 font-medium">
+              <span className="w-1.5 h-1.5 rounded-full bg-green-500" />{activeAccounts.length} active
+            </span>
+          )}
+          {inactiveAccounts.length > 0 && (
+            <span className="flex items-center gap-1 text-red-400 font-medium">
+              <span className="w-1.5 h-1.5 rounded-full bg-red-400" />{inactiveAccounts.length} inactive
+            </span>
+          )}
+        </div>
       </div>
       {banks.length === 0 ? (
-        <p className="text-xs text-gray-400 py-2 px-3 bg-gray-50 rounded-lg border border-dashed border-gray-200">
-          No banks in Settings yet
-        </p>
+        <p className="text-xs text-gray-400 py-2 px-3 bg-gray-50 rounded-lg border border-dashed border-gray-200">No banks in Settings yet</p>
       ) : (
         <div className="flex flex-wrap gap-1.5 p-3 bg-gray-50 rounded-xl border border-gray-200">
-          {banks.map(b => (
-            <button key={b} type="button" onClick={() => toggle(b)}
-              className={`text-xs px-3 py-1.5 rounded-lg border font-medium transition-all ${
-                selected.includes(b)
-                  ? 'bg-blue-600 text-white border-blue-600 shadow-sm'
-                  : 'bg-white text-gray-500 border-gray-200 hover:border-blue-300 hover:text-blue-600'
-              }`}>
-              {b}
-            </button>
-          ))}
+          {banks.map(b => {
+            const s = getStatus(b);
+            return (
+              <button key={b} type="button" onClick={() => cycle(b)}
+                title={s === 'none' ? 'Click to mark active' : s === 'active' ? 'Click to mark inactive' : 'Click to remove'}
+                className={`inline-flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg border font-medium transition-all ${
+                  s === 'active'   ? 'bg-green-50 text-green-700 border-green-300 shadow-sm' :
+                  s === 'inactive' ? 'bg-red-50 text-red-500 border-red-200 shadow-sm' :
+                                     'bg-white text-gray-400 border-gray-200 hover:border-gray-300 hover:text-gray-600'
+                }`}>
+                <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${
+                  s === 'active' ? 'bg-green-500' : s === 'inactive' ? 'bg-red-400' : 'bg-gray-200'
+                }`} />
+                {b}
+              </button>
+            );
+          })}
         </div>
       )}
+      <p className="text-[10px] text-gray-400 mt-1.5 pl-0.5">1 click = Active · 2 clicks = Inactive · 3 clicks = Remove</p>
     </div>
   );
 }
@@ -123,7 +183,9 @@ export default function CompanyProfileDetail() {
   const [saving, setSaving] = useState(false);
   const [emailList, setEmailList] = useState<string[]>(['']);
   const [companyAccounts, setCompanyAccounts] = useState<string[]>([]);
+  const [companyInactiveAccounts, setCompanyInactiveAccounts] = useState<string[]>([]);
   const [personalAccounts, setPersonalAccounts] = useState<string[]>([]);
+  const [personalInactiveAccounts, setPersonalInactiveAccounts] = useState<string[]>([]);
   const [industryEdit, setIndustryEdit] = useState('');
   const [bankNames, setBankNames] = useState<string[]>([]);
   const [categories, setCategories] = useState<string[]>([]);
@@ -168,7 +230,9 @@ export default function CompanyProfileDetail() {
       contact_phone: profile.contact_phone ?? '',
     });
     setCompanyAccounts(profile.company_active_accounts ? profile.company_active_accounts.split(',').map(s => s.trim()).filter(Boolean) : []);
+    setCompanyInactiveAccounts(profile.company_inactive_accounts ? profile.company_inactive_accounts.split(',').map(s => s.trim()).filter(Boolean) : []);
     setPersonalAccounts(profile.personal_active_accounts ? profile.personal_active_accounts.split(',').map(s => s.trim()).filter(Boolean) : []);
+    setPersonalInactiveAccounts(profile.personal_inactive_accounts ? profile.personal_inactive_accounts.split(',').map(s => s.trim()).filter(Boolean) : []);
     const emails = profile.contact_emails ? profile.contact_emails.split(',').map(e => e.trim()).filter(Boolean) : [];
     setEmailList(emails.length > 0 ? emails : ['']);
     setIndustryEdit(profile.industry || '');
@@ -186,7 +250,9 @@ export default function CompanyProfileDetail() {
         address: editForm.address || undefined,
         turnover_aed: editForm.turnover_aed ? Number(editForm.turnover_aed) : undefined,
         company_active_accounts: companyAccounts.join(', ') || undefined,
+        company_inactive_accounts: companyInactiveAccounts.join(', ') || undefined,
         personal_active_accounts: personalAccounts.join(', ') || undefined,
+        personal_inactive_accounts: personalInactiveAccounts.join(', ') || undefined,
         country: editForm.country || undefined,
         is_active: editForm.is_active,
         contact_emails: emailList.filter(e => e.trim()).join(',') || undefined,
@@ -468,7 +534,7 @@ export default function CompanyProfileDetail() {
                 <Landmark size={15} className="text-gray-400 mt-0.5 shrink-0" />
                 <div className="flex-1">
                   <p className="text-xs text-gray-400 mb-1.5">Company Accounts</p>
-                  <AccountPills raw={profile.company_active_accounts} />
+                  <AccountPillsWithStatus active={profile.company_active_accounts} inactive={profile.company_inactive_accounts} />
                 </div>
               </div>
 
@@ -477,7 +543,7 @@ export default function CompanyProfileDetail() {
                 <User size={15} className="text-gray-400 mt-0.5 shrink-0" />
                 <div className="flex-1">
                   <p className="text-xs text-gray-400 mb-1.5">Personal Accounts (Owner)</p>
-                  <AccountPills raw={profile.personal_active_accounts} />
+                  <AccountPillsWithStatus active={profile.personal_active_accounts} inactive={profile.personal_inactive_accounts} />
                 </div>
               </div>
             </div>
@@ -568,8 +634,12 @@ export default function CompanyProfileDetail() {
                   className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500" />
               </div>
 
-              <BankSelector label="Company Bank Accounts" banks={bankNames} selected={companyAccounts} onChange={setCompanyAccounts} />
-              <BankSelector label="Personal Bank Accounts (Owner)" banks={bankNames} selected={personalAccounts} onChange={setPersonalAccounts} />
+              <BankStatusSelector label="Company Bank Accounts" banks={bankNames}
+                activeAccounts={companyAccounts} inactiveAccounts={companyInactiveAccounts}
+                onChangeActive={setCompanyAccounts} onChangeInactive={setCompanyInactiveAccounts} />
+              <BankStatusSelector label="Personal Bank Accounts (Owner)" banks={bankNames}
+                activeAccounts={personalAccounts} inactiveAccounts={personalInactiveAccounts}
+                onChangeActive={setPersonalAccounts} onChangeInactive={setPersonalInactiveAccounts} />
 
               <div>
                 <label className="block text-xs font-medium text-gray-600 mb-1">Contact Phone</label>

@@ -30,6 +30,7 @@ interface CompanyProfile {
   turnover_aed: number | null;
   logo_path: string | null;
   company_active_accounts: string;
+  company_inactive_accounts: string | null;
   personal_active_accounts: string;
   country: string | null;
   is_active: boolean;
@@ -44,54 +45,92 @@ const TIER_BADGE: Record<string, string> = {
   C: 'bg-slate-100 text-slate-700 border border-slate-300',
 };
 
-function BankPills({ raw }: { raw: string }) {
-  const items = raw ? raw.split(',').map(s => s.trim()).filter(Boolean) : [];
-  if (!items.length) return null;
+function BankPills({ active, inactive }: { active: string; inactive?: string | null }) {
+  const activeItems   = active   ? active.split(',').map(s => s.trim()).filter(Boolean)   : [];
+  const inactiveItems = inactive ? inactive.split(',').map(s => s.trim()).filter(Boolean) : [];
+  if (!activeItems.length && !inactiveItems.length) return null;
   return (
     <div className="flex flex-wrap gap-1">
-      {items.map(a => (
-        <span key={a} className="text-xs bg-blue-50 text-blue-700 border border-blue-200 px-1.5 py-0.5 rounded">
-          {a}
+      {activeItems.map(a => (
+        <span key={a} className="inline-flex items-center gap-1 text-xs bg-green-50 text-green-700 border border-green-200 px-1.5 py-0.5 rounded">
+          <span className="w-1 h-1 rounded-full bg-green-500 shrink-0" />{a}
+        </span>
+      ))}
+      {inactiveItems.map(a => (
+        <span key={a} className="inline-flex items-center gap-1 text-xs bg-red-50 text-red-500 border border-red-200 px-1.5 py-0.5 rounded">
+          <span className="w-1 h-1 rounded-full bg-red-400 shrink-0" />{a}
         </span>
       ))}
     </div>
   );
 }
 
-function BankSelector({ label, banks, selected, onChange }: {
-  label: string; banks: string[]; selected: string[]; onChange: (s: string[]) => void;
+type AccountStatus = 'active' | 'inactive' | 'none';
+
+function BankStatusSelector({ label, banks, activeAccounts, inactiveAccounts, onChangeActive, onChangeInactive }: {
+  label: string; banks: string[];
+  activeAccounts: string[]; inactiveAccounts: string[];
+  onChangeActive: (a: string[]) => void; onChangeInactive: (a: string[]) => void;
 }) {
-  const toggle = (b: string) => onChange(selected.includes(b) ? selected.filter(x => x !== b) : [...selected, b]);
+  function getStatus(b: string): AccountStatus {
+    if (activeAccounts.includes(b)) return 'active';
+    if (inactiveAccounts.includes(b)) return 'inactive';
+    return 'none';
+  }
+  function cycle(b: string) {
+    const s = getStatus(b);
+    if (s === 'none') {
+      onChangeActive([...activeAccounts, b]);
+      onChangeInactive(inactiveAccounts.filter(x => x !== b));
+    } else if (s === 'active') {
+      onChangeActive(activeAccounts.filter(x => x !== b));
+      onChangeInactive([...inactiveAccounts, b]);
+    } else {
+      onChangeActive(activeAccounts.filter(x => x !== b));
+      onChangeInactive(inactiveAccounts.filter(x => x !== b));
+    }
+  }
   return (
     <div>
       <div className="flex items-center justify-between mb-2">
         <label className="text-xs font-medium text-gray-600">{label}</label>
-        {selected.length > 0 && (
-          <span className="text-xs text-blue-600 font-medium">{selected.length} selected</span>
-        )}
+        <div className="flex items-center gap-2.5 text-[11px]">
+          {activeAccounts.length > 0 && (
+            <span className="flex items-center gap-1 text-green-600 font-medium">
+              <span className="w-1.5 h-1.5 rounded-full bg-green-500" />{activeAccounts.length} active
+            </span>
+          )}
+          {inactiveAccounts.length > 0 && (
+            <span className="flex items-center gap-1 text-red-400 font-medium">
+              <span className="w-1.5 h-1.5 rounded-full bg-red-400" />{inactiveAccounts.length} inactive
+            </span>
+          )}
+        </div>
       </div>
       {banks.length === 0 ? (
-        <p className="text-xs text-gray-400 py-2 px-3 bg-gray-50 rounded-lg border border-dashed border-gray-200">
-          No banks in Settings yet — go to Settings → Bank Names first
-        </p>
+        <p className="text-xs text-gray-400 py-2 px-3 bg-gray-50 rounded-lg border border-dashed border-gray-200">No banks in Settings yet</p>
       ) : (
         <div className="flex flex-wrap gap-1.5 p-3 bg-gray-50 rounded-xl border border-gray-200">
-          {banks.map(b => (
-            <button
-              key={b}
-              type="button"
-              onClick={() => toggle(b)}
-              className={`text-xs px-3 py-1.5 rounded-lg border font-medium transition-all ${
-                selected.includes(b)
-                  ? 'bg-blue-600 text-white border-blue-600 shadow-sm'
-                  : 'bg-white text-gray-500 border-gray-200 hover:border-blue-300 hover:text-blue-600'
-              }`}
-            >
-              {b}
-            </button>
-          ))}
+          {banks.map(b => {
+            const s = getStatus(b);
+            return (
+              <button key={b} type="button" onClick={() => cycle(b)}
+                title={s === 'none' ? 'Click to mark active' : s === 'active' ? 'Click to mark inactive' : 'Click to remove'}
+                className={`inline-flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg border font-medium transition-all ${
+                  s === 'active'   ? 'bg-green-50 text-green-700 border-green-300 shadow-sm' :
+                  s === 'inactive' ? 'bg-red-50 text-red-500 border-red-200 shadow-sm' :
+                                     'bg-white text-gray-400 border-gray-200 hover:border-gray-300 hover:text-gray-600'
+                }`}>
+                <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${
+                  s === 'active' ? 'bg-green-500' : s === 'inactive' ? 'bg-red-400' : 'bg-gray-200'
+                }`} />
+                {b}
+              </button>
+            );
+          })}
         </div>
       )}
+      <p className="text-[10px] text-gray-400 mt-1.5 pl-0.5">1 click = Active · 2 clicks = Inactive · 3 clicks = Remove</p>
     </div>
   );
 }
@@ -119,7 +158,9 @@ export default function CompanyProfiles() {
   const [deleteTarget, setDeleteTarget] = useState<CompanyProfile | null>(null);
   const [emailList, setEmailList] = useState<string[]>(['']);
   const [companyAccounts, setCompanyAccounts] = useState<string[]>([]);
+  const [companyInactiveAccounts, setCompanyInactiveAccounts] = useState<string[]>([]);
   const [personalAccounts, setPersonalAccounts] = useState<string[]>([]);
+  const [personalInactiveAccounts, setPersonalInactiveAccounts] = useState<string[]>([]);
   const [industryForm, setIndustryForm] = useState('');
   const [bankNames, setBankNames] = useState<string[]>([]);
   const [categories, setCategories] = useState<string[]>([]);
@@ -140,7 +181,9 @@ export default function CompanyProfiles() {
     setForm({ ...EMPTY_FORM });
     setEmailList(['']);
     setCompanyAccounts([]);
+    setCompanyInactiveAccounts([]);
     setPersonalAccounts([]);
+    setPersonalInactiveAccounts([]);
     setIndustryForm('');
     setShowModal(true);
   };
@@ -159,7 +202,9 @@ export default function CompanyProfiles() {
       contact_phone: p.contact_phone ?? '',
     });
     setCompanyAccounts(p.company_active_accounts ? p.company_active_accounts.split(',').map(s => s.trim()).filter(Boolean) : []);
+    setCompanyInactiveAccounts(p.company_inactive_accounts ? p.company_inactive_accounts.split(',').map(s => s.trim()).filter(Boolean) : []);
     setPersonalAccounts(p.personal_active_accounts ? p.personal_active_accounts.split(',').map(s => s.trim()).filter(Boolean) : []);
+    setPersonalInactiveAccounts([]);
     const emails = p.contact_emails ? p.contact_emails.split(',').map(e => e.trim()).filter(Boolean) : [];
     setEmailList(emails.length > 0 ? emails : ['']);
     setIndustryForm(p.industry || '');
@@ -177,7 +222,9 @@ export default function CompanyProfiles() {
         address: form.address.trim() || undefined,
         turnover_aed: form.turnover_aed ? Number(form.turnover_aed) : undefined,
         company_active_accounts: companyAccounts.join(', ') || undefined,
+        company_inactive_accounts: companyInactiveAccounts.join(', ') || undefined,
         personal_active_accounts: personalAccounts.join(', ') || undefined,
+        personal_inactive_accounts: personalInactiveAccounts.join(', ') || undefined,
         country: form.country || undefined,
         is_active: form.is_active,
         contact_emails: emailList.filter(e => e.trim()).join(',') || undefined,
@@ -337,10 +384,10 @@ export default function CompanyProfiles() {
                   )}
 
                   {/* Company accounts */}
-                  {p.company_active_accounts && (
+                  {(p.company_active_accounts || p.company_inactive_accounts) && (
                     <div className="mt-3 pt-3 border-t border-gray-100">
                       <p className="text-xs text-gray-400 mb-1.5">Accounts</p>
-                      <BankPills raw={p.company_active_accounts} />
+                      <BankPills active={p.company_active_accounts} inactive={p.company_inactive_accounts} />
                     </div>
                   )}
                 </div>
@@ -424,18 +471,12 @@ export default function CompanyProfiles() {
               </div>
 
               {/* Bank selectors */}
-              <BankSelector
-                label="Company Bank Accounts"
-                banks={bankNames}
-                selected={companyAccounts}
-                onChange={setCompanyAccounts}
-              />
-              <BankSelector
-                label="Personal Bank Accounts (Owner)"
-                banks={bankNames}
-                selected={personalAccounts}
-                onChange={setPersonalAccounts}
-              />
+              <BankStatusSelector label="Company Bank Accounts" banks={bankNames}
+                activeAccounts={companyAccounts} inactiveAccounts={companyInactiveAccounts}
+                onChangeActive={setCompanyAccounts} onChangeInactive={setCompanyInactiveAccounts} />
+              <BankStatusSelector label="Personal Bank Accounts (Owner)" banks={bankNames}
+                activeAccounts={personalAccounts} inactiveAccounts={personalInactiveAccounts}
+                onChangeActive={setPersonalAccounts} onChangeInactive={setPersonalInactiveAccounts} />
 
               {/* Phone */}
               <div>
