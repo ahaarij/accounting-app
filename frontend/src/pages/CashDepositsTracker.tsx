@@ -161,12 +161,16 @@ function sortGroups(groups: CompanyGroup[], catFilter: CatFilter): CompanyGroup[
     const aO = CAT_ORDER[a.category ?? ''] ?? 3;
     const bO = CAT_ORDER[b.category ?? ''] ?? 3;
     if (aO !== bO) return aO - bO;
-    // 2. Most available capacity first
+    // 2. At-limit companies go to the bottom
+    const aAtLimit = a.total_deposits >= a.monthly_limit;
+    const bAtLimit = b.total_deposits >= b.monthly_limit;
+    if (aAtLimit !== bAtLimit) return aAtLimit ? 1 : -1;
+    // 3. Most bank accounts first
+    if (a.accounts.length !== b.accounts.length) return b.accounts.length - a.accounts.length;
+    // 4. Most available capacity first
     const aAvail = a.monthly_limit - a.total_deposits;
     const bAvail = b.monthly_limit - b.total_deposits;
     if (Math.abs(aAvail - bAvail) > 0.01) return bAvail - aAvail;
-    // 3. Most active bank accounts first
-    if (a.accounts.length !== b.accounts.length) return b.accounts.length - a.accounts.length;
     // 4. Oldest last transaction first (never-used = null = highest priority)
     if (!a.last_transaction_date && !b.last_transaction_date) return a.company_name.localeCompare(b.company_name);
     if (!a.last_transaction_date) return -1;
@@ -244,60 +248,63 @@ interface PlanAllocation {
 
 // Rotates through accounts: unused ones first, then by lowest volume
 function buildDepositPlan(total: number, groups: CompanyGroup[]): { allocations: PlanAllocation[]; leftover: number } {
-  type Slot = {
-    company: CompanyGroup;
-    sortedAccounts: CompanyRow[];
-    accountIdx: number;
-    companyAvailable: number;
-    used: number;
-  };
+  function accountLastTx(row: CompanyRow): string | null {
+    if (row.deposits.length === 0) return null;
+    return row.deposits.reduce((latest, d) => (d.date > latest ? d.date : latest), row.deposits[0].date);
+  }
 
-  const slots: Slot[] = groups
+  // Sort: category (C→B→A) → most accounts → most available capacity
+  const eligible = groups
     .filter((g) => g.monthly_limit - g.total_deposits > 0.01)
-    .map((g) => ({
-      company: g,
-      // Prefer accounts with 0 deposits this period, then lowest volume
-      sortedAccounts: [...g.accounts].sort((a, b) => {
-        if (a.total_deposits === 0 && b.total_deposits > 0) return -1;
-        if (b.total_deposits === 0 && a.total_deposits > 0) return 1;
-        return a.total_deposits - b.total_deposits;
-      }),
-      accountIdx: 0,
-      companyAvailable: g.monthly_limit - g.total_deposits,
-      used: 0,
-    }))
     .sort((a, b) => {
-      const aO = CAT_ORDER[a.company.category ?? ''] ?? 3;
-      const bO = CAT_ORDER[b.company.category ?? ''] ?? 3;
+      const aO = CAT_ORDER[a.category ?? ''] ?? 3;
+      const bO = CAT_ORDER[b.category ?? ''] ?? 3;
       if (aO !== bO) return aO - bO;
-      return b.companyAvailable - a.companyAvailable;
+      if (b.accounts.length !== a.accounts.length) return b.accounts.length - a.accounts.length;
+      return (b.monthly_limit - b.total_deposits) - (a.monthly_limit - a.total_deposits);
     });
 
   const allocations: PlanAllocation[] = [];
   let remaining = total;
-  let progress = true;
 
-  while (remaining > 0.01 && progress) {
-    progress = false;
-    for (const slot of slots) {
-      if (remaining <= 0.01) break;
-      const room = parseFloat((slot.companyAvailable - slot.used).toFixed(2));
-      if (room <= 0.01) continue;
-      const account = slot.sortedAccounts[slot.accountIdx % slot.sortedAccounts.length];
-      const chunk = parseFloat(Math.min(slot.company.per_tx_limit, room, remaining).toFixed(2));
-      if (chunk <= 0) continue;
+  for (const group of eligible) {
+    if (remaining <= 0.01) break;
+
+    const companyAvailable = parseFloat((group.monthly_limit - group.total_deposits).toFixed(2));
+    if (companyAvailable <= 0.01) continue;
+
+    // Oldest last transaction first; never-used accounts go first
+    const sortedAccounts = [...group.accounts].sort((a, b) => {
+      const aDate = accountLastTx(a);
+      const bDate = accountLastTx(b);
+      if (!aDate && !bDate) return 0;
+      if (!aDate) return -1;
+      if (!bDate) return 1;
+      return aDate.localeCompare(bDate);
+    });
+
+    let accountIdx = 0;
+    let companyUsed = 0;
+
+    // Fill this company completely before moving on
+    while (remaining > 0.01 && companyUsed < companyAvailable - 0.01) {
+      const account = sortedAccounts[accountIdx % sortedAccounts.length];
+      const companyRoom = parseFloat((companyAvailable - companyUsed).toFixed(2));
+      const chunk = parseFloat(Math.min(group.per_tx_limit, companyRoom, remaining).toFixed(2));
+      if (chunk <= 0.01) break;
+
       allocations.push({
-        company_id: slot.company.company_id,
-        company_name: slot.company.company_name,
+        company_id: group.company_id,
+        company_name: group.company_name,
         bank_account: account.bank_account!,
-        category: slot.company.category,
+        category: group.category,
         amount: chunk,
-        remaining_after: parseFloat((room - chunk).toFixed(2)),
+        remaining_after: parseFloat((companyRoom - chunk).toFixed(2)),
       });
-      slot.used = parseFloat((slot.used + chunk).toFixed(2));
-      slot.accountIdx++;
+
+      companyUsed = parseFloat((companyUsed + chunk).toFixed(2));
       remaining = parseFloat((remaining - chunk).toFixed(2));
-      progress = true;
+      accountIdx++;
     }
   }
 
@@ -570,7 +577,7 @@ function DepositPlannerModal({ groups, onClose, onDepositsAdded }: {
       <div className="bg-white rounded-2xl shadow-2xl w-[740px] max-h-[85vh] flex flex-col border border-gray-100">
         <div className="px-7 pt-7 pb-5 border-b border-gray-100">
           <h2 className="text-base font-semibold text-gray-900">Large Deposit Planner</h2>
-          <p className="text-sm text-gray-400 mt-1">Prioritizes Cat C → B → A; rotates unused accounts first, then by lowest volume</p>
+          <p className="text-sm text-gray-400 mt-1">Cat C → B → A · most accounts first · fills each company before moving on · oldest account used first</p>
         </div>
         <div className="px-7 py-5 border-b border-gray-100 space-y-4">
           <div className="flex items-end gap-3">
@@ -752,12 +759,22 @@ export default function CashDepositsTracker() {
     });
   }, [companyGroups, catFilter, sortCol, sortDir]);
 
+  const rangeMonths = useMemo(() => {
+    if (!effectiveFrom || !effectiveTo) return 1;
+    const [fy, fm] = effectiveFrom.split('-').map(Number);
+    const [ty, tm] = effectiveTo.split('-').map(Number);
+    return Math.max(1, (ty - fy) * 12 + (tm - fm) + 1);
+  }, [effectiveFrom, effectiveTo]);
+
   const stats = useMemo(() => ({
     total: sortedGroups.reduce((s, g) => s + g.total_deposits, 0),
-    exceeded: sortedGroups.filter((g) => getGroupLimitStatus(g) === 'exceeded').length,
-    warning: sortedGroups.filter((g) => getGroupLimitStatus(g) === 'warning').length,
-    capacity: sortedGroups.reduce((s, g) => s + Math.max(0, g.monthly_limit - g.total_deposits), 0),
-  }), [sortedGroups]);
+    exceeded: sortedGroups.filter((g) => g.total_deposits >= g.monthly_limit * rangeMonths).length,
+    warning: sortedGroups.filter((g) => {
+      const lim = g.monthly_limit * rangeMonths;
+      return g.total_deposits >= lim * 0.8 && g.total_deposits < lim;
+    }).length,
+    capacity: sortedGroups.reduce((s, g) => s + Math.max(0, g.monthly_limit * rangeMonths - g.total_deposits), 0),
+  }), [sortedGroups, rangeMonths]);
 
   function toggleSet<T>(prev: Set<T>, val: T): Set<T> {
     const next = new Set(prev);
@@ -996,7 +1013,7 @@ export default function CashDepositsTracker() {
               <div className="bg-white rounded-xl border border-gray-100 px-5 py-4 shadow-sm">
                 <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide">Available Capacity</p>
                 <p className="text-2xl font-bold text-emerald-600 font-mono mt-2 tracking-tight">{fmtK(stats.capacity)}</p>
-                <p className="text-xs text-gray-400 mt-0.5">AED remaining</p>
+                <p className="text-xs text-gray-400 mt-0.5">AED remaining{rangeMonths > 1 ? ` · ×${rangeMonths} months` : ''}</p>
               </div>
             </div>
           )}
