@@ -165,13 +165,13 @@ function sortGroups(groups: CompanyGroup[], catFilter: CatFilter): CompanyGroup[
     const aAvail = a.monthly_limit - a.total_deposits;
     const bAvail = b.monthly_limit - b.total_deposits;
     if (Math.abs(aAvail - bAvail) > 0.01) return bAvail - aAvail;
-    // 3. Number of accounts: more first
-    if (a.accounts.length !== b.accounts.length) return b.accounts.length - a.accounts.length;
-    // 4. Oldest last transaction first (null = never transacted = first)
+    // 3. Oldest last transaction first (null = never transacted = first)
     if (!a.last_transaction_date && !b.last_transaction_date) return a.company_name.localeCompare(b.company_name);
     if (!a.last_transaction_date) return -1;
     if (!b.last_transaction_date) return 1;
-    return a.last_transaction_date.localeCompare(b.last_transaction_date);
+    if (a.last_transaction_date !== b.last_transaction_date) return a.last_transaction_date.localeCompare(b.last_transaction_date);
+    // 4. Number of accounts: more first
+    return b.accounts.length - a.accounts.length;
   });
 }
 
@@ -562,7 +562,7 @@ function DepositPlannerModal({ groups, onClose, onDepositsAdded }: {
 
   return (
     <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50">
-      <div className="bg-white rounded-2xl shadow-2xl w-[740px] max-h-[85vh] flex flex-col border border-gray-100">
+      <div className="bg-white rounded-2xl shadow-2xl w-[95vw] max-w-[740px] max-h-[85vh] flex flex-col border border-gray-100">
         <div className="px-7 pt-7 pb-5 border-b border-gray-100">
           <h2 className="text-base font-semibold text-gray-900">Large Deposit Planner</h2>
           <p className="text-sm text-gray-400 mt-1">Cat C → B → A · most accounts first · one account per company per day · oldest account used first</p>
@@ -589,7 +589,7 @@ function DepositPlannerModal({ groups, onClose, onDepositsAdded }: {
             </div>
           )}
         </div>
-        <div className="overflow-y-auto flex-1">
+        <div className="overflow-y-auto overflow-x-auto flex-1">
           {plan === null ? (
             <div className="py-20 text-center">
               <Calculator size={28} className="text-gray-200 mx-auto mb-3" />
