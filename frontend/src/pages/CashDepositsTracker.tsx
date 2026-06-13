@@ -161,17 +161,13 @@ function sortGroups(groups: CompanyGroup[], catFilter: CatFilter): CompanyGroup[
     const aO = CAT_ORDER[a.category ?? ''] ?? 3;
     const bO = CAT_ORDER[b.category ?? ''] ?? 3;
     if (aO !== bO) return aO - bO;
-    // 2. At-limit companies go to the bottom
-    const aAtLimit = a.total_deposits >= a.monthly_limit;
-    const bAtLimit = b.total_deposits >= b.monthly_limit;
-    if (aAtLimit !== bAtLimit) return aAtLimit ? 1 : -1;
-    // 3. Most bank accounts first
-    if (a.accounts.length !== b.accounts.length) return b.accounts.length - a.accounts.length;
-    // 4. Most available capacity first
+    // 2. Available capacity: more first
     const aAvail = a.monthly_limit - a.total_deposits;
     const bAvail = b.monthly_limit - b.total_deposits;
     if (Math.abs(aAvail - bAvail) > 0.01) return bAvail - aAvail;
-    // 4. Oldest last transaction first (never-used = null = highest priority)
+    // 3. Number of accounts: more first
+    if (a.accounts.length !== b.accounts.length) return b.accounts.length - a.accounts.length;
+    // 4. Oldest last transaction first (null = never transacted = first)
     if (!a.last_transaction_date && !b.last_transaction_date) return a.company_name.localeCompare(b.company_name);
     if (!a.last_transaction_date) return -1;
     if (!b.last_transaction_date) return 1;
@@ -246,7 +242,7 @@ interface PlanAllocation {
   remaining_after: number;
 }
 
-// Rotates through accounts: unused ones first, then by lowest volume
+// One account per company per day: picks the oldest-used account, deposits up to per_tx_limit
 function buildDepositPlan(total: number, groups: CompanyGroup[]): { allocations: PlanAllocation[]; leftover: number } {
   function accountLastTx(row: CompanyRow): string | null {
     if (row.deposits.length === 0) return null;
@@ -273,39 +269,29 @@ function buildDepositPlan(total: number, groups: CompanyGroup[]): { allocations:
     const companyAvailable = parseFloat((group.monthly_limit - group.total_deposits).toFixed(2));
     if (companyAvailable <= 0.01) continue;
 
-    // Oldest last transaction first; never-used accounts go first
-    const sortedAccounts = [...group.accounts].sort((a, b) => {
+    // Pick ONE account per day: oldest last-transaction first (never-used = first)
+    const account = [...group.accounts].sort((a, b) => {
       const aDate = accountLastTx(a);
       const bDate = accountLastTx(b);
       if (!aDate && !bDate) return 0;
       if (!aDate) return -1;
       if (!bDate) return 1;
       return aDate.localeCompare(bDate);
+    })[0];
+
+    const chunk = parseFloat(Math.min(group.per_tx_limit, companyAvailable, remaining).toFixed(2));
+    if (chunk <= 0.01) continue;
+
+    allocations.push({
+      company_id: group.company_id,
+      company_name: group.company_name,
+      bank_account: account.bank_account!,
+      category: group.category,
+      amount: chunk,
+      remaining_after: parseFloat((companyAvailable - chunk).toFixed(2)),
     });
 
-    let accountIdx = 0;
-    let companyUsed = 0;
-
-    // Fill this company completely before moving on
-    while (remaining > 0.01 && companyUsed < companyAvailable - 0.01) {
-      const account = sortedAccounts[accountIdx % sortedAccounts.length];
-      const companyRoom = parseFloat((companyAvailable - companyUsed).toFixed(2));
-      const chunk = parseFloat(Math.min(group.per_tx_limit, companyRoom, remaining).toFixed(2));
-      if (chunk <= 0.01) break;
-
-      allocations.push({
-        company_id: group.company_id,
-        company_name: group.company_name,
-        bank_account: account.bank_account!,
-        category: group.category,
-        amount: chunk,
-        remaining_after: parseFloat((companyRoom - chunk).toFixed(2)),
-      });
-
-      companyUsed = parseFloat((companyUsed + chunk).toFixed(2));
-      remaining = parseFloat((remaining - chunk).toFixed(2));
-      accountIdx++;
-    }
+    remaining = parseFloat((remaining - chunk).toFixed(2));
   }
 
   return { allocations, leftover: remaining > 0.01 ? remaining : 0 };
@@ -577,7 +563,7 @@ function DepositPlannerModal({ groups, onClose, onDepositsAdded }: {
       <div className="bg-white rounded-2xl shadow-2xl w-[740px] max-h-[85vh] flex flex-col border border-gray-100">
         <div className="px-7 pt-7 pb-5 border-b border-gray-100">
           <h2 className="text-base font-semibold text-gray-900">Large Deposit Planner</h2>
-          <p className="text-sm text-gray-400 mt-1">Cat C → B → A · most accounts first · fills each company before moving on · oldest account used first</p>
+          <p className="text-sm text-gray-400 mt-1">Cat C → B → A · most accounts first · one account per company per day · oldest account used first</p>
         </div>
         <div className="px-7 py-5 border-b border-gray-100 space-y-4">
           <div className="flex items-end gap-3">
@@ -774,6 +760,7 @@ export default function CashDepositsTracker() {
       return g.total_deposits >= lim * 0.8 && g.total_deposits < lim;
     }).length,
     capacity: sortedGroups.reduce((s, g) => s + Math.max(0, g.monthly_limit * rangeMonths - g.total_deposits), 0),
+    totalCapacity: sortedGroups.reduce((s, g) => s + g.monthly_limit * rangeMonths, 0),
   }), [sortedGroups, rangeMonths]);
 
   function toggleSet<T>(prev: Set<T>, val: T): Set<T> {
@@ -849,7 +836,7 @@ export default function CashDepositsTracker() {
     );
   }
 
-  function accountSubRow(group: CompanyGroup, account: CompanyRow) {
+  function accountSubRow(_group: CompanyGroup, account: CompanyRow) {
     const key = rowKey(account);
     const isExpanded = expandedAccounts.has(key);
     return (
@@ -1011,9 +998,9 @@ export default function CashDepositsTracker() {
                 <p className={cn('text-xs mt-0.5', stats.warning > 0 ? 'text-amber-400' : 'text-gray-300')}>{stats.warning === 1 ? 'company' : 'companies'} ≥80%</p>
               </div>
               <div className="bg-white rounded-xl border border-gray-100 px-5 py-4 shadow-sm">
-                <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide">Available Capacity</p>
+                <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide"> Capacity</p>
                 <p className="text-2xl font-bold text-emerald-600 font-mono mt-2 tracking-tight">{fmtK(stats.capacity)}</p>
-                <p className="text-xs text-gray-400 mt-0.5">AED remaining{rangeMonths > 1 ? ` · ×${rangeMonths} months` : ''}</p>
+                <p className="text-xs text-gray-400 mt-0.5 font-mono">/ {fmtK(stats.totalCapacity)}{rangeMonths > 1 ? ` · ×${rangeMonths}mo` : ''}</p>
               </div>
             </div>
           )}
