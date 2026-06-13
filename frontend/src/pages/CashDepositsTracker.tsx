@@ -180,9 +180,11 @@ function fmt(n: number): string {
 }
 
 function fmtK(n: number): string {
-  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
-  if (n >= 1_000) return `${Math.round(n / 1_000)}K`;
-  return String(n);
+  const sign = n < 0 ? '-' : '';
+  const abs = Math.abs(n);
+  if (abs >= 1_000_000) return `${sign}${(abs / 1_000_000).toFixed(2)}M`;
+  if (abs >= 1_000) return `${sign}${(abs / 1_000).toFixed(2)}K`;
+  return `${sign}${abs.toFixed(2)}`;
 }
 
 function fmtDate(dateStr: string | null): string {
@@ -759,7 +761,7 @@ export default function CashDepositsTracker() {
       const lim = g.monthly_limit * rangeMonths;
       return g.total_deposits >= lim * 0.8 && g.total_deposits < lim;
     }).length,
-    capacity: sortedGroups.reduce((s, g) => s + Math.max(0, g.monthly_limit * rangeMonths - g.total_deposits), 0),
+    capacity: sortedGroups.reduce((s, g) => s + (g.monthly_limit * rangeMonths - g.total_deposits), 0),
     totalCapacity: sortedGroups.reduce((s, g) => s + g.monthly_limit * rangeMonths, 0),
   }), [sortedGroups, rangeMonths]);
 
