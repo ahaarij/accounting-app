@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Layout, PageHeader } from '../components/Layout';
 import { useAuth } from '../auth/AuthContext';
@@ -65,36 +65,58 @@ function BankPills({ active, inactive }: { active: string; inactive?: string | n
   );
 }
 
-type AccountStatus = 'active' | 'inactive' | 'none';
-
 function BankStatusSelector({ label, banks, activeAccounts, inactiveAccounts, onChangeActive, onChangeInactive }: {
   label: string; banks: string[];
   activeAccounts: string[]; inactiveAccounts: string[];
   onChangeActive: (a: string[]) => void; onChangeInactive: (a: string[]) => void;
 }) {
-  function getStatus(b: string): AccountStatus {
-    if (activeAccounts.includes(b)) return 'active';
-    if (inactiveAccounts.includes(b)) return 'inactive';
-    return 'none';
+  const [dropdownOpen, setDropdownOpen] = useState(false);
+  const [search, setSearch] = useState('');
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    function handleClickOutside(e: MouseEvent) {
+      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
+        setDropdownOpen(false);
+        setSearch('');
+      }
+    }
+    if (dropdownOpen) document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, [dropdownOpen]);
+
+  const selectedBanks = [...activeAccounts, ...inactiveAccounts];
+  const availableBanks = banks.filter(b => !selectedBanks.includes(b));
+  const filtered = search
+    ? availableBanks.filter(b => b.toLowerCase().includes(search.toLowerCase()))
+    : availableBanks;
+
+  function addBank(b: string) {
+    onChangeActive([...activeAccounts, b]);
+    setSearch('');
+    setDropdownOpen(false);
   }
-  function cycle(b: string) {
-    const s = getStatus(b);
-    if (s === 'none') {
-      onChangeActive([...activeAccounts, b]);
-      onChangeInactive(inactiveAccounts.filter(x => x !== b));
-    } else if (s === 'active') {
+
+  function removeBank(b: string) {
+    onChangeActive(activeAccounts.filter(x => x !== b));
+    onChangeInactive(inactiveAccounts.filter(x => x !== b));
+  }
+
+  function toggleStatus(b: string) {
+    if (activeAccounts.includes(b)) {
       onChangeActive(activeAccounts.filter(x => x !== b));
       onChangeInactive([...inactiveAccounts, b]);
     } else {
-      onChangeActive(activeAccounts.filter(x => x !== b));
       onChangeInactive(inactiveAccounts.filter(x => x !== b));
+      onChangeActive([...activeAccounts, b]);
     }
   }
+
   return (
     <div>
-      <div className="flex items-center justify-between mb-2">
+      <div className="flex items-center justify-between mb-1.5">
         <label className="text-xs font-medium text-gray-600">{label}</label>
-        <div className="flex items-center gap-2.5 text-[11px]">
+        <div className="flex items-center gap-2 text-[11px]">
           {activeAccounts.length > 0 && (
             <span className="flex items-center gap-1 text-green-600 font-medium">
               <span className="w-1.5 h-1.5 rounded-full bg-green-500" />{activeAccounts.length} active
@@ -105,32 +127,74 @@ function BankStatusSelector({ label, banks, activeAccounts, inactiveAccounts, on
               <span className="w-1.5 h-1.5 rounded-full bg-red-400" />{inactiveAccounts.length} inactive
             </span>
           )}
+          {banks.length > 0 && (
+            <div className="relative" ref={containerRef}>
+              <button type="button" onClick={() => setDropdownOpen(o => !o)}
+                className="inline-flex items-center gap-1 text-[11px] px-2 py-0.5 rounded-lg border border-dashed border-gray-300 text-gray-500 hover:border-blue-400 hover:text-blue-500 transition-colors focus:outline-none">
+                <Plus size={10} /> Add
+              </button>
+
+              {dropdownOpen && (
+                <div className="absolute right-0 top-full mt-1.5 w-48 bg-white rounded-xl border border-gray-200 shadow-xl z-50 overflow-hidden">
+                  <div className="p-2 border-b border-gray-100">
+                    <input autoFocus value={search} onChange={e => setSearch(e.target.value)}
+                      placeholder="Search banks…"
+                      className="w-full text-xs px-2.5 py-1.5 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-400" />
+                  </div>
+                  <div className="max-h-44 overflow-y-auto py-1">
+                    {filtered.length === 0 ? (
+                      <p className="text-xs text-gray-400 px-3 py-2">
+                        {availableBanks.length === 0 ? 'All banks added' : 'No banks found'}
+                      </p>
+                    ) : (
+                      filtered.map(b => (
+                        <button key={b} type="button" onClick={() => addBank(b)}
+                          className="w-full text-left text-xs px-3 py-1.5 hover:bg-blue-50 hover:text-blue-700 text-gray-700 transition-colors">
+                          {b}
+                        </button>
+                      ))
+                    )}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
         </div>
       </div>
-      {banks.length === 0 ? (
-        <p className="text-xs text-gray-400 py-2 px-3 bg-gray-50 rounded-lg border border-dashed border-gray-200">No banks in Settings yet</p>
-      ) : (
-        <div className="flex flex-wrap gap-1.5 p-3 bg-gray-50 rounded-xl border border-gray-200">
-          {banks.map(b => {
-            const s = getStatus(b);
+
+      <div className="flex flex-wrap gap-1.5 min-h-[2.75rem] items-center p-2 bg-gray-50 rounded-xl border border-gray-200">
+        {selectedBanks.length === 0 ? (
+          <span className="text-xs text-gray-400 ml-1 select-none">No accounts added</span>
+        ) : (
+          selectedBanks.map(b => {
+            const isActive = activeAccounts.includes(b);
             return (
-              <button key={b} type="button" onClick={() => cycle(b)}
-                title={s === 'none' ? 'Click to mark active' : s === 'active' ? 'Click to mark inactive' : 'Click to remove'}
-                className={`inline-flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg border font-medium transition-all ${
-                  s === 'active'   ? 'bg-green-50 text-green-700 border-green-300 shadow-sm' :
-                  s === 'inactive' ? 'bg-red-50 text-red-500 border-red-200 shadow-sm' :
-                                     'bg-white text-gray-400 border-gray-200 hover:border-gray-300 hover:text-gray-600'
-                }`}>
-                <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${
-                  s === 'active' ? 'bg-green-500' : s === 'inactive' ? 'bg-red-400' : 'bg-gray-200'
-                }`} />
-                {b}
-              </button>
+              <span key={b} className={`inline-flex items-center rounded-lg border font-medium text-xs overflow-hidden ${
+                isActive ? 'bg-green-50 border-green-200' : 'bg-red-50 border-red-200'
+              }`}>
+                <button type="button" onClick={() => toggleStatus(b)}
+                  title={isActive ? 'Click to mark inactive' : 'Click to mark active'}
+                  className={`inline-flex items-center gap-1.5 px-2 py-1 transition-colors ${
+                    isActive
+                      ? 'text-green-700 hover:bg-green-100'
+                      : 'text-red-500 hover:bg-red-100'
+                  }`}>
+                  <span className={`block w-1.5 h-1.5 rounded-full shrink-0 ${isActive ? 'bg-green-500' : 'bg-red-400'}`} />
+                  {b}
+                </button>
+                <button type="button" onClick={() => removeBank(b)}
+                  className={`px-1.5 py-1 transition-colors border-l ${
+                    isActive
+                      ? 'border-green-200 text-green-400 hover:text-red-500 hover:bg-red-50'
+                      : 'border-red-200 text-red-300 hover:text-red-500 hover:bg-red-100'
+                  }`}>
+                  <X size={10} />
+                </button>
+              </span>
             );
-          })}
-        </div>
-      )}
-      <p className="text-[10px] text-gray-400 mt-1.5 pl-0.5">1 click = Active · 2 clicks = Inactive · 3 clicks = Remove</p>
+          })
+        )}
+      </div>
     </div>
   );
 }
@@ -201,9 +265,12 @@ export default function CompanyProfiles() {
       is_active: p.is_active ?? true,
       contact_phone: p.contact_phone ?? '',
     });
-    setCompanyAccounts(p.company_active_accounts ? p.company_active_accounts.split(',').map(s => s.trim()).filter(Boolean) : []);
-    setCompanyInactiveAccounts(p.company_inactive_accounts ? p.company_inactive_accounts.split(',').map(s => s.trim()).filter(Boolean) : []);
-    setPersonalAccounts(p.personal_active_accounts ? p.personal_active_accounts.split(',').map(s => s.trim()).filter(Boolean) : []);
+    const cActive = p.company_active_accounts ? p.company_active_accounts.split(',').map(s => s.trim()).filter(Boolean) : [];
+    const cInactive = p.company_inactive_accounts ? p.company_inactive_accounts.split(',').map(s => s.trim()).filter(Boolean) : [];
+    const pActive = p.personal_active_accounts ? p.personal_active_accounts.split(',').map(s => s.trim()).filter(Boolean) : [];
+    setCompanyAccounts(cActive);
+    setCompanyInactiveAccounts(cInactive.filter(b => !cActive.includes(b)));
+    setPersonalAccounts(pActive);
     setPersonalInactiveAccounts([]);
     const emails = p.contact_emails ? p.contact_emails.split(',').map(e => e.trim()).filter(Boolean) : [];
     setEmailList(emails.length > 0 ? emails : ['']);
@@ -221,10 +288,10 @@ export default function CompanyProfiles() {
         owner_name: form.owner_name.trim() || undefined,
         address: form.address.trim() || undefined,
         turnover_aed: form.turnover_aed ? Number(form.turnover_aed) : undefined,
-        company_active_accounts: companyAccounts.join(', ') || undefined,
-        company_inactive_accounts: companyInactiveAccounts.join(', ') || undefined,
-        personal_active_accounts: personalAccounts.join(', ') || undefined,
-        personal_inactive_accounts: personalInactiveAccounts.join(', ') || undefined,
+        company_active_accounts: companyAccounts.join(', '),
+        company_inactive_accounts: companyInactiveAccounts.join(', '),
+        personal_active_accounts: personalAccounts.join(', '),
+        personal_inactive_accounts: personalInactiveAccounts.join(', '),
         country: form.country || undefined,
         is_active: form.is_active,
         contact_emails: emailList.filter(e => e.trim()).join(',') || undefined,

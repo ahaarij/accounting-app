@@ -5,10 +5,10 @@ import { CompanyCashDeposit } from '../entities/company-cash-deposit.entity';
 import { CompanyDepositLimit } from '../entities/company-deposit-limit.entity';
 import { CompanyProfile } from '../entities/company-profile.entity';
 
-function getDefaultLimits(category: string | null): { per_tx_limit: number; monthly_limit: number } {
-  if (category === 'C') return { per_tx_limit: 250000, monthly_limit: 750000 };
-  if (category === 'B') return { per_tx_limit: 250000, monthly_limit: 500000 };
-  return { per_tx_limit: 250000, monthly_limit: 250000 }; // A and null
+function getDefaultLimits(category: string | null, activeAccountCount = 1): { per_tx_limit: number; monthly_limit: number } {
+  const categoryMax = category === 'C' ? 750000 : category === 'B' ? 500000 : 250000;
+  const monthly_limit = Math.min(activeAccountCount * 250000, categoryMax);
+  return { per_tx_limit: 250000, monthly_limit };
 }
 
 function parseAccounts(csv: string | null): string[] {
@@ -69,7 +69,7 @@ export class CashDepositsService {
         const k = rowKey(company.id, account);
         const accountDeposits = depositsByKey.get(k) || [];
         const lim = limitsByKey.get(k);
-        const defaults = getDefaultLimits(company.category);
+        const defaults = getDefaultLimits(company.category, allAccounts.length);
         const per_tx_limit = lim ? parseFloat(lim.per_tx_limit as any) : defaults.per_tx_limit;
         const monthly_limit = lim ? parseFloat(lim.monthly_limit as any) : defaults.monthly_limit;
 
@@ -146,7 +146,7 @@ export class CashDepositsService {
 
     const accounts = parseAccounts(company.company_active_accounts);
     const accountsToUpdate = accounts.length > 0 ? accounts : [_bankAccount];
-    const defaults = getDefaultLimits(company.category);
+    const defaults = getDefaultLimits(company.category, accounts.length || 1);
 
     for (const account of accountsToUpdate) {
       let lim = await this.limitRepo.findOne({ where: { company_id: companyId, bank_account: account } });

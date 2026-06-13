@@ -162,6 +162,10 @@ export default function Dashboard() {
   const [depositChartLoading, setDepositChartLoading] = useState(true);
   const [depositRawRows, setDepositRawRows]   = useState<any[]>([]);
   const [selectedDepositDay, setSelectedDepositDay] = useState<string | null>(null);
+  const [activeDeposit, setActiveDeposit] = useState<{ day: number; amount: number; dateStr: string; x: number; y: number } | null>(null);
+  const depositHideTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const depositWrapperRef = useRef<HTMLDivElement>(null);
+  const depositMousePos = useRef({ x: 0, y: 0 });
 
   useEffect(() => {
     Promise.all([getSummary(), getFlags(undefined, false), getBankAccounts()])
@@ -444,25 +448,86 @@ export default function Dashboard() {
                 No cash deposits recorded for this month
               </div>
             ) : (
-              <ResponsiveContainer width="100%" height={200}>
-                <LineChart
-                  data={depositChartData.labels.map((label, i) => ({ day: label, AED: depositChartData!.data[i] }))}
-                  margin={{ top: 4, right: 16, left: 0, bottom: 0 }}
-                  onClick={(e: any) => {
-                    if (e?.activePayload?.[0]?.payload?.AED > 0) {
-                      const day = String(e.activePayload[0].payload.day).padStart(2, '0');
-                      setSelectedDepositDay(`${depositMonth}-${day}`);
-                    }
-                  }}
-                  style={{ cursor: 'pointer' }}
-                >
-                  <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
-                  <XAxis dataKey="day" tick={{ fontSize: 11 }} />
-                  <YAxis tick={{ fontSize: 11 }} tickFormatter={v => v >= 1_000_000 ? `${(v / 1_000_000).toFixed(1)}M` : v >= 1_000 ? `${Math.round(v / 1_000)}K` : String(v)} width={60} />
-                  <Tooltip content={(props: any) => <DepositTooltip {...props} depositMonth={depositMonth} onViewDetails={setSelectedDepositDay} />} />
-                  <Line type="monotone" dataKey="AED" stroke="#059669" strokeWidth={2} dot={{ r: 3 }} activeDot={{ r: 5 }} />
-                </LineChart>
-              </ResponsiveContainer>
+              <div
+                className="relative"
+                ref={depositWrapperRef}
+              >
+                <ResponsiveContainer width="100%" height={200}>
+                  <LineChart
+                    data={depositChartData.labels.map((label, i) => ({ day: label, AED: depositChartData!.data[i] }))}
+                    margin={{ top: 4, right: 16, left: 0, bottom: 0 }}
+                    onClick={(e: any) => {
+                      if (e?.activePayload?.[0]?.payload?.AED > 0) {
+                        const day = String(e.activePayload[0].payload.day).padStart(2, '0');
+                        setSelectedDepositDay(`${depositMonth}-${day}`);
+                        setActiveDeposit(null);
+                      }
+                    }}
+                    style={{ cursor: 'pointer' }}
+                    onMouseLeave={() => {
+                      depositHideTimer.current = setTimeout(() => setActiveDeposit(null), 250);
+                    }}
+                  >
+                    <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+                    <XAxis dataKey="day" tick={{ fontSize: 11 }} />
+                    <YAxis tick={{ fontSize: 11 }} tickFormatter={v => v >= 1_000_000 ? `${(v / 1_000_000).toFixed(1)}M` : v >= 1_000 ? `${Math.round(v / 1_000)}K` : String(v)} width={60} />
+                    <Line
+                      type="monotone" dataKey="AED" stroke="#059669" strokeWidth={2} dot={{ r: 3 }}
+                      activeDot={(props: any) => {
+                        const show = () => {
+                          if (depositHideTimer.current) clearTimeout(depositHideTimer.current);
+                          if ((props.payload?.AED ?? 0) > 0) {
+                            setActiveDeposit({
+                              day: props.payload.day,
+                              amount: props.payload.AED,
+                              dateStr: `${depositMonth}-${String(props.payload.day).padStart(2, '0')}`,
+                              x: props.cx,
+                              y: props.cy,
+                            });
+                          }
+                        };
+                        return (
+                          <g style={{ cursor: 'pointer' }}
+                            onMouseEnter={show}
+                            onMouseLeave={() => { depositHideTimer.current = setTimeout(() => setActiveDeposit(null), 600); }}
+                            onClick={() => { if ((props.payload?.AED ?? 0) > 0) { setSelectedDepositDay(`${depositMonth}-${String(props.payload.day).padStart(2, '0')}`); setActiveDeposit(null); } }}
+                          >
+                            <circle cx={props.cx} cy={props.cy} r={5} fill="#059669" />
+                            <circle cx={props.cx} cy={props.cy} r={18} fill="transparent" />
+                          </g>
+                        );
+                      }}
+                    />
+                  </LineChart>
+                </ResponsiveContainer>
+                {activeDeposit && (
+                  <div
+                    className="absolute z-10 bg-white border border-gray-200 rounded-lg shadow-lg p-3 min-w-[140px] pointer-events-auto"
+                    style={{
+                      left: activeDeposit.x > 220 ? activeDeposit.x - 158 : activeDeposit.x + 14,
+                      top: Math.max(4, activeDeposit.y - 40),
+                      animation: 'depositTooltipIn 120ms ease-out',
+                    }}
+                    onMouseEnter={() => {
+                      if (depositHideTimer.current) clearTimeout(depositHideTimer.current);
+                    }}
+                    onMouseLeave={() => {
+                      depositHideTimer.current = setTimeout(() => setActiveDeposit(null), 700);
+                    }}
+                  >
+                    <p className="text-[11px] font-semibold text-gray-500 mb-1">Day {activeDeposit.day}</p>
+                    <p className="text-sm font-mono font-bold text-emerald-600">
+                      AED {activeDeposit.amount.toLocaleString('en-AE', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}
+                    </p>
+                    <button
+                      onClick={() => { setSelectedDepositDay(activeDeposit.dateStr); setActiveDeposit(null); }}
+                      className="mt-2 flex items-center gap-1 text-[11px] font-medium text-blue-600 hover:text-blue-700"
+                    >
+                      See details <ChevronRight size={11} />
+                    </button>
+                  </div>
+                )}
+              </div>
             )}
           </CardBody>
         </Card>
@@ -660,27 +725,6 @@ export default function Dashboard() {
   );
 }
 
-function DepositTooltip({ active, payload, label, depositMonth, onViewDetails }: any) {
-  if (!active || !payload?.length) return null;
-  const amount: number = payload[0]?.value ?? 0;
-  const dateStr = `${depositMonth}-${String(label).padStart(2, '0')}`;
-  return (
-    <div className="bg-white border border-gray-200 rounded-lg shadow-lg p-3 min-w-[140px]" style={{ pointerEvents: 'all' }}>
-      <p className="text-[11px] font-semibold text-gray-500 mb-1">Day {label}</p>
-      <p className="text-sm font-mono font-bold text-emerald-600">
-        AED {amount.toLocaleString('en-AE', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}
-      </p>
-      {amount > 0 && (
-        <button
-          onMouseDown={(e) => { e.stopPropagation(); onViewDetails(dateStr); }}
-          className="mt-2 flex items-center gap-1 text-[11px] font-medium text-blue-600 hover:text-blue-700"
-        >
-          See details <ChevronRight size={11} />
-        </button>
-      )}
-    </div>
-  );
-}
 
 function DepositDayModal({ date, entries, onClose }: {
   date: string;
