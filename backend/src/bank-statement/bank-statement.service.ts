@@ -447,17 +447,19 @@ export class BankStatementService {
   }
 
   async getAccountsWithStats(startDate?: string, endDate?: string): Promise<Array<CsvAccount & { tx_count: number; latest_date: string; latest_balance: string }>> {
-    const dateJoinCondition = [
-      't.csv_account_id = a.id',
-      startDate ? `t.date >= '${startDate}'` : null,
-      endDate   ? `t.date <= '${endDate}'`   : null,
-    ].filter(Boolean).join(' AND ');
+    const params: Record<string, string> = {};
+    if (startDate) params.startDate = startDate;
+    if (endDate) params.endDate = endDate;
 
-    const balanceDateClause = [
-      startDate ? `t2.date >= '${startDate}'` : null,
-      endDate   ? `t2.date <= '${endDate}'`   : null,
-    ].filter(Boolean).join(' AND ');
-    const balanceWhere = balanceDateClause ? `AND ${balanceDateClause}` : '';
+    const joinParts = ['t.csv_account_id = a.id'];
+    if (startDate) joinParts.push('t.date >= :startDate');
+    if (endDate) joinParts.push('t.date <= :endDate');
+    const dateJoinCondition = joinParts.join(' AND ');
+
+    const balanceParts: string[] = [];
+    if (startDate) balanceParts.push('t2.date >= :startDate');
+    if (endDate) balanceParts.push('t2.date <= :endDate');
+    const balanceWhere = balanceParts.length ? `AND ${balanceParts.join(' AND ')}` : '';
 
     const rows = await this.accountRepo
       .createQueryBuilder('a')
@@ -469,6 +471,7 @@ export class BankStatementService {
         `(SELECT t2.balance FROM csv_transactions t2 WHERE t2.csv_account_id = a.id ${balanceWhere} ORDER BY t2.date DESC, t2.id DESC LIMIT 1)`,
         'latest_balance',
       )
+      .setParameters(params)
       .groupBy('a.id')
       .getRawMany();
 

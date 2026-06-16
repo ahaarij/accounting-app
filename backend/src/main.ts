@@ -5,6 +5,9 @@ import { join } from 'path';
 import { AppModule } from './app.module';
 
 async function bootstrap() {
+  if (!process.env.JWT_SECRET) {
+    throw new Error('JWT_SECRET environment variable is not set — refusing to start');
+  }
   const app = await NestFactory.create<NestExpressApplication>(AppModule);
   app.enableCors({
     origin: [
