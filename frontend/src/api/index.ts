@@ -72,10 +72,9 @@ export const importCsvFile = (file: File) => {
   return api.post('/bank-statements/import', form, { headers: { 'Content-Type': 'multipart/form-data' } });
 };
 
-export const importPdfFile = (file: File, accountId?: number, password?: string) => {
+export const importPdfFile = (files: File[], password?: string) => {
   const form = new FormData();
-  form.append('file', file);
-  if (accountId) form.append('accountId', String(accountId));
+  for (const file of files) form.append('files', file);
   if (password) form.append('password', password);
   return api.post('/bank-statements/import-pdf', form, { headers: { 'Content-Type': 'multipart/form-data' } });
 };

@@ -61,7 +61,6 @@ export default function BankStatements() {
   // PDF import / preview
   const pdfRef = useRef<HTMLInputElement>(null);
   const [pdfMode, setPdfMode] = useState<'import' | 'preview'>('import');
-  const [pdfAccountId, setPdfAccountId] = useState('');
   const [pdfPassword, setPdfPassword] = useState('');
   const [pdfPwdShow, setPdfPwdShow] = useState(false);
   const [pdfBusy, setPdfBusy] = useState(false);
@@ -152,21 +151,32 @@ export default function BankStatements() {
   };
 
   // PDF import / preview handler
-  const handlePdfFile = async (file: File) => {
-    if (!file.name.toLowerCase().endsWith('.pdf')) { setPdfError('Please upload a .pdf file'); return; }
-    setPdfBusy(true); setPdfResult(null); setPdfError('');
-    try {
-      if (pdfMode === 'preview') {
+  const handlePdfFiles = async (incoming: FileList | File[]) => {
+    const files = Array.from(incoming);
+    if (!files.length) return;
+    if (pdfMode === 'preview') {
+      // preview only supports one file
+      const file = files[0];
+      if (!file.name.toLowerCase().endsWith('.pdf')) { setPdfError('Please upload a .pdf file'); return; }
+      setPdfBusy(true); setPdfResult(null); setPdfError('');
+      try {
         const res = await previewPdfFile(file, pdfPassword || undefined);
         setPdfResult({ _preview: true, ...res.data });
-      } else {
-        const res = await importPdfFile(file, pdfAccountId ? parseInt(pdfAccountId) : undefined, pdfPassword || undefined);
+      } catch (e: any) {
+        setPdfError(e?.response?.data?.message ?? 'Failed');
+      } finally { setPdfBusy(false); }
+    } else {
+      const nonPdf = files.find(f => !f.name.toLowerCase().endsWith('.pdf'));
+      if (nonPdf) { setPdfError(`"${nonPdf.name}" is not a PDF`); return; }
+      setPdfBusy(true); setPdfResult(null); setPdfError('');
+      try {
+        const res = await importPdfFile(files, pdfPassword || undefined);
         setPdfResult(res.data);
         load();
-      }
-    } catch (e: any) {
-      setPdfError(e?.response?.data?.message ?? 'Failed');
-    } finally { setPdfBusy(false); }
+      } catch (e: any) {
+        setPdfError(e?.response?.data?.message ?? 'Failed');
+      } finally { setPdfBusy(false); }
+    }
   };
 
   // Per-account PDF password
@@ -191,7 +201,7 @@ export default function BankStatements() {
 
   return (
     <Layout>
-      <PageHeader title="Bank Statements" subtitle="Import CSV bank statements and manage account registry" />
+      <PageHeader title="Bank Statements (Work in progress)" subtitle="Import CSV bank statements and manage account registry" />
       <div className="p-8 space-y-6">
 
         {/* CSV Import */}
@@ -251,73 +261,62 @@ export default function BankStatements() {
               </div>
             </CardHeader>
             <CardBody className="space-y-3">
-              <div className="grid grid-cols-2 gap-3">
-                {pdfMode === 'import' && (
-                  <div>
-                    <label className="text-xs text-gray-500 mb-1 block">Account</label>
-                    <select value={pdfAccountId} onChange={e => setPdfAccountId(e.target.value)}
-                      className="w-full border border-gray-200 rounded-lg px-2 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-blue-500">
-                      <option value="">Auto-detect from filename</option>
-                      {accounts.map(a => (
-                        <option key={a.id} value={a.id}>{a.company_name} ({a.currency})</option>
-                      ))}
-                    </select>
-                  </div>
-                )}
-                <div className={pdfMode === 'preview' ? 'col-span-2' : ''}>
-                  <label className="text-xs text-gray-500 mb-1 block">Password {pdfMode === 'preview' ? '(if protected)' : 'override'}</label>
-                  <div className="relative">
-                    <input type={pdfPwdShow ? 'text' : 'password'} value={pdfPassword}
-                      onChange={e => setPdfPassword(e.target.value)}
-                      placeholder={pdfMode === 'import' ? 'Uses saved password if blank' : 'Leave blank if not protected'}
-                      className="w-full border border-gray-200 rounded-lg px-2 py-1.5 pr-8 text-xs focus:outline-none focus:ring-2 focus:ring-blue-500" />
-                    <button type="button" onClick={() => setPdfPwdShow(v => !v)}
-                      className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600">
-                      {pdfPwdShow ? <EyeOff size={12} /> : <Eye size={12} />}
-                    </button>
-                  </div>
+              <div>
+                <label className="text-xs text-gray-500 mb-1 block">Password {pdfMode === 'preview' ? '(if protected)' : '(applies to all files; uses saved password if blank)'}</label>
+                <div className="relative">
+                  <input type={pdfPwdShow ? 'text' : 'password'} value={pdfPassword}
+                    onChange={e => setPdfPassword(e.target.value)}
+                    placeholder={pdfMode === 'import' ? 'Uses saved password per account if blank' : 'Leave blank if not protected'}
+                    className="w-full border border-gray-200 rounded-lg px-2 py-1.5 pr-8 text-xs focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                  <button type="button" onClick={() => setPdfPwdShow(v => !v)}
+                    className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600">
+                    {pdfPwdShow ? <EyeOff size={12} /> : <Eye size={12} />}
+                  </button>
                 </div>
               </div>
 
               <div
                 onDragOver={(e) => { e.preventDefault(); setPdfDragOver(true); }}
                 onDragLeave={() => setPdfDragOver(false)}
-                onDrop={(e) => { e.preventDefault(); setPdfDragOver(false); const f = e.dataTransfer.files[0]; if (f) handlePdfFile(f); }}
+                onDrop={(e) => { e.preventDefault(); setPdfDragOver(false); if (e.dataTransfer.files.length) handlePdfFiles(e.dataTransfer.files); }}
                 onClick={() => pdfRef.current?.click()}
                 className={`border-2 border-dashed rounded-xl p-6 text-center cursor-pointer transition-colors
                   ${pdfDragOver ? 'border-purple-400 bg-purple-50' : 'border-gray-200 hover:border-gray-300 hover:bg-gray-50'}`}
               >
                 <FileText size={22} className="mx-auto mb-2 text-gray-400" />
                 <p className="text-sm font-medium text-gray-700">
-                  {pdfMode === 'import' ? 'Drop a .pdf to import transactions' : 'Drop a .pdf to preview extracted text'}
+                  {pdfMode === 'import' ? 'Drop one or more .pdf files to import' : 'Drop a .pdf to preview extracted text'}
                 </p>
-                <p className="text-xs text-gray-400 mt-1">Password-protected PDFs supported</p>
-                <input ref={pdfRef} type="file" accept=".pdf" className="hidden"
-                  onChange={(e) => { const f = e.target.files?.[0]; if (f) handlePdfFile(f); e.target.value = ''; }} />
+                <p className="text-xs text-gray-400 mt-1">
+                  {pdfMode === 'import' ? 'Each PDF is auto-detected — mix banks freely' : 'Password-protected PDFs supported'}
+                </p>
+                <input ref={pdfRef} type="file" accept=".pdf" multiple={pdfMode === 'import'} className="hidden"
+                  onChange={(e) => { if (e.target.files?.length) handlePdfFiles(e.target.files); e.target.value = ''; }} />
               </div>
 
               {pdfBusy && <p className="text-sm text-blue-600 text-center">{pdfMode === 'preview' ? 'Extracting text…' : 'Importing…'}</p>}
 
-              {pdfResult && !pdfResult._preview && (
+              {Array.isArray(pdfResult) && pdfResult.length > 0 && (
                 <div className="space-y-2">
-                  {pdfResult.warning ? (
-                    <div className="flex items-start gap-2 bg-amber-50 border border-amber-200 rounded-lg px-4 py-3 text-sm text-amber-800">
-                      <span>⚠ {pdfResult.warning}</span>
-                    </div>
-                  ) : (
-                    <div className="flex items-start gap-2 bg-green-50 border border-green-200 rounded-lg px-4 py-3 text-sm text-green-800">
-                      <Check size={15} className="mt-0.5 shrink-0" />
-                      <span>
-                        <strong>{pdfResult.company_name}</strong> ({pdfResult.account_number}) —{' '}
-                        {pdfResult.imported} imported, {pdfResult.skipped} skipped · {pdfResult.pages} page{pdfResult.pages !== 1 ? 's' : ''}
-                      </span>
-                    </div>
-                  )}
-                  {pdfResult.preview_text && (
-                    <pre className="bg-gray-50 border border-gray-200 rounded-lg p-3 text-xs text-gray-700 overflow-auto max-h-64 whitespace-pre-wrap">
-                      {pdfResult.preview_text}
-                    </pre>
-                  )}
+                  {pdfResult.map((r: any, i: number) => (
+                    r.warning ? (
+                      <div key={i} className="flex items-start gap-2 bg-amber-50 border border-amber-200 rounded-lg px-4 py-3 text-sm text-amber-800">
+                        <span>⚠ {r.warning}</span>
+                      </div>
+                    ) : (
+                      <div key={i} className="bg-green-50 border border-green-200 rounded-lg px-4 py-3 text-sm text-green-800 space-y-1">
+                        <div className="flex items-center gap-2">
+                          <Check size={15} className="shrink-0" />
+                          <span className="font-semibold">{r.bank} · {r.pages} page{r.pages !== 1 ? 's' : ''}</span>
+                        </div>
+                        {(r.accounts ?? []).map((a: any, j: number) => (
+                          <div key={j} className="pl-5 text-xs text-green-700">
+                            <strong>{a.company_name}</strong> ({a.account_number}) — {a.imported} imported, {a.skipped} skipped{a.created ? ' · account auto-created' : ''}
+                          </div>
+                        ))}
+                      </div>
+                    )
+                  ))}
                 </div>
               )}
 

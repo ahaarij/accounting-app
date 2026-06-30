@@ -1,10 +1,23 @@
 import { Injectable, BadRequestException, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { Repository, IsNull } from 'typeorm';
 import { CsvAccount } from '../entities/csv-account.entity';
 import { CsvTransaction } from '../entities/csv-transaction.entity';
 import { toNumber } from '../import/utils/date.util';
 import { PDFParse } from 'pdf-parse';
+import { detectBank } from './parsers/bank-detector';
+import { parseADIB } from './parsers/adib.parser';
+import { parseFAB } from './parsers/fab.parser';
+import { parseFABNew } from './parsers/fab-new.parser';
+import { parseWio } from './parsers/wio.parser';
+import { parseENBD } from './parsers/enbd.parser';
+import { parseEIB } from './parsers/eib.parser';
+import { parseNBF } from './parsers/nbf.parser';
+import { parseMashreq } from './parsers/mashreq.parser';
+import { parseUBL } from './parsers/ubl.parser';
+import { parseADCB } from './parsers/adcb.parser';
+import { parseRAKBANK } from './parsers/rakbank.parser';
+import { ParsedStatement } from './parsers/types';
 
 @Injectable()
 export class BankStatementService {
@@ -194,237 +207,191 @@ export class BankStatementService {
 
   // ── PDF import ─────────────────────────────────────────────────────────────
 
-  async importPDF(buffer: Buffer, filename: string, accountId?: number, passwordOverride?: string, source = 'pdf'): Promise<{
-    account_number: string;
-    company_name: string;
-    imported: number;
-    skipped: number;
+  async importPDF(buffer: Buffer, filename: string, _accountId?: number, passwordOverride?: string, source = 'pdf'): Promise<{
+    bank: string;
+    accounts: Array<{ account_number: string; company_name: string; imported: number; skipped: number; created: boolean }>;
     pages: number;
   }> {
-    // Resolve account — explicit ID wins, else derive from filename
-    let csvAccount: CsvAccount | null = null;
-    if (accountId) {
-      csvAccount = await this.accountRepo.findOne({ where: { id: accountId } });
-      if (!csvAccount) throw new NotFoundException(`Account #${accountId} not found`);
-    } else {
-      const fileMeta = this.extractAccountFromFilename(filename.replace(/\.pdf$/i, '.csv'));
-      csvAccount = await this.accountRepo.findOne({ where: { account_number: fileMeta.accountNumber } });
-      if (!csvAccount) {
-        // Auto-create account from filename
-        csvAccount = await this.accountRepo.save(this.accountRepo.create({
-          account_number: fileMeta.accountNumber,
-          company_name: fileMeta.companyName,
-          bank_name: fileMeta.bankName,
-          currency: fileMeta.currency,
-          source,
-        }));
-      }
-    }
-
-    // Decrypt and extract text — try without password first, fall back to stored/override password
-    let pdfText: string;
-    let numPages: number;
-
+    // Extract text from PDF
     const tryParse = async (pwd?: string) => {
       const parser = new PDFParse({ data: buffer, ...(pwd ? { password: pwd } : {}) });
-      const result = await parser.getText();
-      return result;
+      return parser.getText();
     };
 
+    let textResult: any;
     try {
-      // Attempt 1: no password (works for unprotected PDFs)
-      const result = await tryParse();
-      pdfText = result.text;
-      numPages = (result as any).total ?? 1;
+      textResult = await tryParse();
     } catch (e: any) {
       const isPasswordError = e?.name === 'PasswordException' || /password/i.test(e?.message ?? '');
-      if (!isPasswordError) {
-        throw new BadRequestException(`Failed to read PDF: ${e?.message ?? 'unknown error'}`);
-      }
-      // Attempt 2: use stored password or override
-      const password = passwordOverride || csvAccount.pdf_password;
-      if (!password) {
-        throw new BadRequestException(
-          `This PDF is password-protected. Set a PDF password for "${csvAccount.company_name}" in the Account Registry first.`,
-        );
-      }
+      if (!isPasswordError) throw new BadRequestException(`Failed to read PDF: ${e?.message ?? 'unknown error'}`);
+      if (!passwordOverride) throw new BadRequestException('This PDF is password-protected. Enter the password above.');
       try {
-        const result = await tryParse(password);
-        pdfText = result.text;
-        numPages = (result as any).total ?? 1;
+        textResult = await tryParse(passwordOverride);
       } catch {
-        throw new BadRequestException(
-          `Incorrect PDF password for "${csvAccount.company_name}". Update it in the Account Registry.`,
-        );
+        throw new BadRequestException('Incorrect PDF password.');
       }
     }
 
-    // Parse transactions from extracted text
-    const lines = pdfText.split('\n').map(l => l.trim()).filter(Boolean);
-    const transactions = this.parsePdfTransactions(lines);
+    const fullText: string = textResult.text;
+    const numPages: number = (textResult as any).total ?? 1;
+    const pages: string[] = fullText.split(/\f/).length > 1 ? fullText.split(/\f/) : [fullText];
 
-    if (transactions.length === 0) {
-      return {
-        account_number: csvAccount.account_number,
-        company_name: csvAccount.company_name,
-        imported: 0,
-        skipped: 0,
-        pages: numPages,
-        preview_text: pdfText.substring(0, 3000),
-        warning: 'No transaction rows detected. The extracted text is shown below so you can verify the layout.',
-      } as any;
+    // Detect bank
+    const bankCode = detectBank(fullText);
+    if (!bankCode) {
+      throw new BadRequestException(
+        'Bank not supported — accepted banks: ADIB, FAB, FAB (new), Wio, ENBD, EIB, NBF, Mashreq, ADCB, RAKBANK.',
+      );
     }
 
-    let imported = 0;
-    let skipped = 0;
-    for (const tx of transactions) {
-      const exists = await this.txRepo.findOne({
-        where: {
-          csv_account_id: csvAccount.id,
-          date: tx.date,
-          description: tx.description,
-          debit: tx.debit,
-          credit: tx.credit,
-        },
-      });
-      if (exists) { skipped++; continue; }
-      await this.txRepo.save(this.txRepo.create({
-        csv_account_id: csvAccount.id,
-        date: tx.date,
-        description: tx.description,
-        ref: tx.ref,
-        debit: tx.debit,
-        credit: tx.credit,
-        balance: tx.balance,
-        source,
-      }));
-      imported++;
+    // Parse with bank-specific parser
+    let statement: ParsedStatement;
+    switch (bankCode) {
+      case 'ADIB':    statement = parseADIB(pages);    break;
+      case 'FAB':     statement = parseFAB(pages);     break;
+      case 'FAB_NEW': statement = parseFABNew(pages);  break;
+      case 'WIO':     statement = parseWio(pages);     break;
+      case 'ENBD':    statement = parseENBD(pages);    break;
+      case 'EIB':     statement = parseEIB(pages);     break;
+      case 'NBF':     statement = parseNBF(pages);     break;
+      case 'MASHREQ': statement = parseMashreq(pages); break;
+      case 'UBL':     statement = parseUBL(pages);     break;
+      case 'ADCB':    statement = parseADCB(pages);    break;
+      case 'RAKBANK': statement = parseRAKBANK(pages); break;
     }
 
-    return {
-      account_number: csvAccount.account_number,
-      company_name: csvAccount.company_name,
-      imported,
-      skipped,
-      pages: numPages,
-    };
-  }
+    const results: Array<{ account_number: string; company_name: string; imported: number; skipped: number; created: boolean }> = [];
 
-  // Parse transactions from PDF text lines (handles most common bank PDF layouts)
-  private parsePdfTransactions(lines: string[]): TxRow[] {
-    // Strategy 1: find a header row then parse columnar data
-    const DATE_HDR   = /\bdate\b/i;
-    const DESC_HDR   = /\b(description|narrative|particulars?|details?|remarks?|narration)\b/i;
-    const DEBIT_HDR  = /\b(debit|dr|withdrawal|out)\b/i;
-    const CREDIT_HDR = /\b(credit|cr|deposit|in)\b/i;
-    const BAL_HDR    = /\b(balance|bal)\b/i;
-    const REF_HDR    = /\b(ref(erence)?|chq|cheque)\b/i;
+    for (const parsedAccount of statement.accounts) {
+      // Find or create the csv_account
+      let csvAccount = parsedAccount.iban
+        ? await this.accountRepo.findOne({ where: { iban: parsedAccount.iban } })
+        : null;
 
-    // Try to find header row
-    let headerIdx = -1;
-    for (let i = 0; i < Math.min(lines.length, 30); i++) {
-      const l = lines[i];
-      if (DATE_HDR.test(l) && (DEBIT_HDR.test(l) || CREDIT_HDR.test(l))) {
-        headerIdx = i;
-        break;
+      if (!csvAccount && parsedAccount.account_number) {
+        csvAccount = await this.accountRepo.findOne({ where: { account_number: parsedAccount.account_number } });
       }
-    }
 
-    if (headerIdx >= 0) {
-      const columnar = this.parsePdfColumnar(lines, headerIdx);
-      if (columnar.length > 0) return columnar;
-      // Columnar split failed (columns not separated by 2+ spaces in extracted text) — fall through
-    }
-
-    // Strategy 2: date-anchored rows — scan for lines starting with a date
-    const transactions: TxRow[] = [];
-    const DATE_START = /^(\d{1,2}[-\/\.]\d{1,2}[-\/\.]\d{2,4}|\d{4}-\d{2}-\d{2})/;
-    const NUM_RE = /[\d,]+\.?\d*/g;
-
-    for (let i = 0; i < lines.length; i++) {
-      const l = lines[i];
-      if (!DATE_START.test(l)) continue;
-
-      const isoDate = this.parseAnyDate(l.split(/\s+/)[0]);
-      if (!isoDate) continue;
-
-      // Collect all numbers on this line (and optionally the next)
-      const restOfLine = l.replace(/^\S+\s*/, '');
-      const nums = (restOfLine.match(NUM_RE) || []).map(n => parseFloat(n.replace(/,/g, ''))).filter(n => !isNaN(n));
-
-      // Heuristic: last number is balance, second-last is debit or credit
-      let debit: number | null = null;
-      let credit: number | null = null;
-      let balance: number | null = null;
-
-      if (nums.length >= 2) {
-        balance = nums[nums.length - 1];
-        const prev = nums[nums.length - 2];
-        // If there are 3+ numbers, try debit/credit split
-        if (nums.length >= 3) {
-          debit  = nums[nums.length - 3] || null;
-          credit = nums[nums.length - 2] || null;
-        } else {
-          credit = prev;
+      let created = false;
+      if (!csvAccount) {
+        csvAccount = await this.accountRepo.save(this.accountRepo.create({
+          account_number: parsedAccount.account_number,
+          company_name: parsedAccount.holder_name,
+          bank_name: parsedAccount.bank_name,
+          currency: parsedAccount.currency,
+          iban: parsedAccount.iban || undefined,
+          source,
+        }));
+        created = true;
+      } else {
+        // Update IBAN if we now have it
+        if (parsedAccount.iban && !csvAccount.iban) {
+          csvAccount.iban = parsedAccount.iban;
+          await this.accountRepo.save(csvAccount);
         }
       }
 
-      const words = restOfLine.split(/\s+/);
-      const descWords = words.filter(w => !/^[\d,]+\.?\d*$/.test(w));
-      const description = descWords.join(' ').trim() || null;
+      const parsedTxs = statement.transactions.get(parsedAccount.account_number) ?? [];
 
-      transactions.push({ date: isoDate, description, ref: null, debit, credit, balance });
-    }
+      // Separate parents and charges
+      const parents = parsedTxs.filter(t => !t.is_charge);
+      const charges = parsedTxs.filter(t => t.is_charge);
 
-    return transactions;
-  }
+      let imported = 0;
+      let skipped = 0;
 
-  private parsePdfColumnar(lines: string[], headerIdx: number): TxRow[] {
-    const header = lines[headerIdx];
-    // Build rough column positions from token positions in header
-    const tokens = header.split(/\s{2,}/).map(t => t.trim()).filter(Boolean);
+      // Map charge_ref → saved parent id (for linking children)
+      const refToParentId = new Map<string, number>();
 
-    const DATE_COL   = tokens.findIndex(t => /\bdate\b/i.test(t));
-    const DESC_COL   = tokens.findIndex(t => /\b(description|narrative|particulars?|details?|narration)\b/i.test(t));
-    const REF_COL    = tokens.findIndex(t => /\b(ref(erence)?|chq|cheque)\b/i.test(t));
-    const DEBIT_COL  = tokens.findIndex(t => /\b(debit|dr|withdrawal)\b/i.test(t));
-    const CREDIT_COL = tokens.findIndex(t => /\b(credit|cr|deposit)\b/i.test(t));
-    const BAL_COL    = tokens.findIndex(t => /\b(balance|bal)\b/i.test(t));
+      for (const tx of parents) {
+        // Dedup check
+        const exists = await this.txRepo.findOne({
+          where: {
+            csv_account_id: csvAccount.id,
+            date: tx.date,
+            ref: tx.reference ?? undefined,
+            debit: tx.debit ?? undefined,
+            credit: tx.credit ?? undefined,
+          },
+        });
+        if (exists) {
+          skipped++;
+          if (tx.reference) refToParentId.set(tx.reference, exists.id);
+          continue;
+        }
 
-    const transactions: TxRow[] = [];
+        const saved = await this.txRepo.save(this.txRepo.create({
+          csv_account_id: csvAccount.id,
+          date: tx.date,
+          value_date: tx.value_date ?? undefined,
+          description: tx.narration,
+          counterparty: tx.counterparty ?? undefined,
+          transaction_type: tx.transaction_type,
+          ref: tx.reference ?? undefined,
+          debit: tx.debit ?? undefined,
+          credit: tx.credit ?? undefined,
+          balance: tx.running_balance ?? undefined,
+          is_charge: false,
+          fx_rate: tx.fx_rate ?? undefined,
+          fx_original_amount: tx.fx_original_amount ?? undefined,
+          fx_original_currency: tx.fx_original_currency ?? undefined,
+          bank_detected: bankCode,
+          source,
+        }));
+        imported++;
+        if (tx.reference) refToParentId.set(tx.reference, saved.id);
+      }
 
-    for (let i = headerIdx + 1; i < lines.length; i++) {
-      const cells = lines[i].split(/\s{2,}/).map(c => c.trim());
-      if (cells.length < 2) continue;
+      for (const tx of charges) {
+        const parentId = tx.charge_ref ? refToParentId.get(tx.charge_ref) : undefined;
 
-      const dateStr = DATE_COL >= 0 ? cells[DATE_COL] : cells[0];
-      const isoDate = this.parseAnyDate(dateStr ?? '');
-      if (!isoDate) continue;
+        const exists = await this.txRepo.findOne({
+          where: {
+            csv_account_id: csvAccount.id,
+            date: tx.date,
+            ref: tx.reference ?? undefined,
+            debit: tx.debit ?? undefined,
+            credit: tx.credit ?? undefined,
+          },
+        });
+        if (exists) { skipped++; continue; }
 
-      const rawNum = (v?: string) => {
-        if (!v) return null;
-        const n = parseFloat(v.replace(/,/g, ''));
-        return isNaN(n) ? null : n;
-      };
+        await this.txRepo.save(this.txRepo.create({
+          csv_account_id: csvAccount.id,
+          date: tx.date,
+          value_date: tx.value_date ?? undefined,
+          description: tx.narration,
+          counterparty: tx.counterparty ?? undefined,
+          transaction_type: tx.transaction_type,
+          ref: tx.reference ?? undefined,
+          debit: tx.debit ?? undefined,
+          credit: tx.credit ?? undefined,
+          balance: tx.running_balance ?? undefined,
+          is_charge: true,
+          parent_transaction_id: parentId,
+          bank_detected: bankCode,
+          source,
+        }));
+        imported++;
+      }
 
-      transactions.push({
-        date:        isoDate,
-        description: DESC_COL >= 0   ? cells[DESC_COL]   || null : null,
-        ref:         REF_COL >= 0    ? cells[REF_COL]    || null : null,
-        debit:       DEBIT_COL >= 0  ? rawNum(cells[DEBIT_COL])  : null,
-        credit:      CREDIT_COL >= 0 ? rawNum(cells[CREDIT_COL]) : null,
-        balance:     BAL_COL >= 0    ? rawNum(cells[BAL_COL])    : null,
+      results.push({
+        account_number: csvAccount.account_number,
+        company_name: csvAccount.company_name,
+        imported,
+        skipped,
+        created,
       });
     }
 
-    return transactions;
+    return { bank: bankCode, accounts: results, pages: numPages };
   }
 
   // ── Transactions ──────────────────────────────────────────────────────────
 
   async getTransactions(accountId: number, page = 1, limit = 50, startDate?: string, endDate?: string): Promise<{
     account: CsvAccount;
-    transactions: CsvTransaction[];
+    transactions: Array<CsvTransaction & { charges: CsvTransaction[] }>;
     total: number;
     page: number;
     pages: number;
@@ -432,8 +399,10 @@ export class BankStatementService {
     const account = await this.accountRepo.findOne({ where: { id: accountId } });
     if (!account) throw new NotFoundException(`Account #${accountId} not found`);
 
+    // Fetch only parent (top-level) transactions
     const qb = this.txRepo.createQueryBuilder('t')
       .where('t.csv_account_id = :accountId', { accountId })
+      .andWhere('t.parent_transaction_id IS NULL')
       .orderBy('t.date', 'DESC')
       .addOrderBy('t.id', 'DESC')
       .skip((page - 1) * limit)
@@ -442,7 +411,25 @@ export class BankStatementService {
     if (startDate) qb.andWhere('t.date >= :startDate', { startDate });
     if (endDate) qb.andWhere('t.date <= :endDate', { endDate });
 
-    const [transactions, total] = await qb.getManyAndCount();
+    const [parents, total] = await qb.getManyAndCount();
+
+    // Attach charge children
+    let chargeMap = new Map<number, CsvTransaction[]>();
+    if (parents.length > 0) {
+      const parentIds = parents.map(p => p.id);
+      const charges = await this.txRepo
+        .createQueryBuilder('t')
+        .where('t.parent_transaction_id IN (:...ids)', { ids: parentIds })
+        .orderBy('t.id', 'ASC')
+        .getMany();
+      for (const c of charges) {
+        const arr = chargeMap.get(c.parent_transaction_id!) ?? [];
+        arr.push(c);
+        chargeMap.set(c.parent_transaction_id!, arr);
+      }
+    }
+
+    const transactions = parents.map(p => ({ ...p, charges: chargeMap.get(p.id) ?? [] }));
     return { account, transactions, total, page, pages: Math.ceil(total / limit) };
   }
 
@@ -468,7 +455,7 @@ export class BankStatementService {
       .addSelect('COUNT(t.id)', 'tx_count')
       .addSelect('MAX(t.date)', 'latest_date')
       .addSelect(
-        `(SELECT t2.balance FROM csv_transactions t2 WHERE t2.csv_account_id = a.id ${balanceWhere} ORDER BY t2.date DESC, t2.id DESC LIMIT 1)`,
+        `(SELECT t2.balance FROM csv_transactions t2 WHERE t2.csv_account_id = a.id ${balanceWhere} ORDER BY t2.date DESC, t2.id ASC LIMIT 1)`,
         'latest_balance',
       )
       .setParameters(params)

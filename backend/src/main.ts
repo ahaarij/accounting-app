@@ -1,4 +1,6 @@
 import 'reflect-metadata';
+import { config } from 'dotenv';
+config(); // load .env for local dev (no-op in production where env vars are injected)
 import { NestFactory } from '@nestjs/core';
 import { NestExpressApplication } from '@nestjs/platform-express';
 import { join } from 'path';

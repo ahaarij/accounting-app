@@ -2,3 +2,9 @@
 node_modules/
 dist/
 .env
+pdfs1/
+pdf2/
+STATUS.md
+Specs.md
+HANDOFF.md
+CLAUDE.md

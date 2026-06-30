@@ -229,8 +229,10 @@ export class EmailMonitorService implements OnModuleInit, OnModuleDestroy {
           } else if (ext === '.pdf') {
             this.logger.log(`  Importing "${filename}" → Bank Statements PDF…`);
             const result = await this.bankStatementService.importPDF(attachment.content, filename, undefined, undefined, 'email');
-            recordsImported = result.imported;
-            this.logger.log(`  Done — ${result.imported} imported, ${result.skipped} skipped (${result.pages} pages)`);
+            const totalImported = result.accounts.reduce((s, a) => s + a.imported, 0);
+            const totalSkipped  = result.accounts.reduce((s, a) => s + a.skipped, 0);
+            recordsImported = totalImported;
+            this.logger.log(`  Done (${result.bank}) — ${totalImported} imported, ${totalSkipped} skipped (${result.pages} pages)`);
           } else {
             const tmpPath = path.join(os.tmpdir(), `email-import-${Date.now()}-${filename}`);
             try {

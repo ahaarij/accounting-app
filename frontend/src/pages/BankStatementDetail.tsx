@@ -2,15 +2,155 @@ import { useEffect, useState } from 'react';
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import { Layout, PageHeader } from '../components/Layout';
 import { Card, CardHeader } from '../components/ui/card';
-import { Badge } from '../components/ui/badge';
 import { Button } from '../components/ui/button';
 import { getCsvTransactions } from '../api';
 import { fmtDate } from '../utils/format';
-import { ArrowLeft, Search } from 'lucide-react';
+import { ArrowLeft, Search, ChevronDown, ChevronRight } from 'lucide-react';
 
 function fmtNum(v: any) {
   if (v == null || v === '') return '—';
   return Number(v).toLocaleString('en-AE', { minimumFractionDigits: 2 });
+}
+
+const BANK_COLORS: Record<string, string> = {
+  // ADIB:    'bg-purple-100 text-purple-700',
+  // FAB:     'bg-blue-100 text-blue-700',
+  // FAB_NEW: 'bg-blue-100 text-blue-700',
+  // WIO:     'bg-teal-100 text-teal-700',
+  // ENBD:    'bg-red-100 text-red-700',
+  // EIB:     'bg-green-100 text-green-700',
+  // NBF:     'bg-orange-100 text-orange-700',
+  // MASHREQ: 'bg-pink-100 text-pink-700',
+  // UBL:     'bg-indigo-100 text-indigo-700',
+  // ADCB:    'bg-cyan-100 text-cyan-700',
+  // RAKBANK: 'bg-rose-100 text-rose-700',
+};
+
+const TYPE_COLORS: Record<string, string> = {
+  CASH_DEPOSIT:         'bg-emerald-100 text-emerald-700',
+  INWARD_TRANSFER:      'bg-blue-100 text-blue-700',
+  OUTWARD_TRANSFER:     'bg-red-100 text-red-700',
+  OUTWARD_INTERNATIONAL:'bg-rose-100 text-rose-700',
+  INTERNAL_TRANSFER:    'bg-gray-100 text-gray-600',
+  FX_CONVERSION:        'bg-amber-100 text-amber-700',
+  BANK_CHARGE:          'bg-orange-100 text-orange-700',
+  VAT_CHARGE:           'bg-orange-100 text-orange-700',
+  MONTHLY_CHARGE:       'bg-orange-100 text-orange-700',
+  CHEQUE_PAID:          'bg-slate-100 text-slate-600',
+  RETURNED_CHEQUE:      'bg-slate-100 text-slate-600',
+  OTHER:                'bg-gray-100 text-gray-500',
+};
+
+const TYPE_LABELS: Record<string, string> = {
+  CASH_DEPOSIT:         'Cash Deposit',
+  INWARD_TRANSFER:      'Inward',
+  OUTWARD_TRANSFER:     'Outward',
+  OUTWARD_INTERNATIONAL:'Intl Transfer',
+  INTERNAL_TRANSFER:    'Internal',
+  FX_CONVERSION:        'FX',
+  BANK_CHARGE:          'Charge',
+  VAT_CHARGE:           'VAT',
+  MONTHLY_CHARGE:       'Monthly Fee',
+  CHEQUE_PAID:          'Cheque',
+  RETURNED_CHEQUE:      'Returned',
+  OTHER:                'Other',
+};
+
+function BankBadge({ bank }: { bank: string }) {
+  if (!bank) return null;
+  return (
+    <span className={`inline-flex items-center px-2 py-0.5 rounded text-[10px] font-semibold leading-none ${BANK_COLORS[bank] ?? 'bg-gray-100 text-gray-500'}`}>
+      {bank}
+    </span>
+  );
+}
+
+function TypeBadge({ type }: { type: string }) {
+  if (!type) return null;
+  return (
+    <span className={`inline-flex items-center px-2 py-0.5 rounded text-[10px] font-medium leading-none ${TYPE_COLORS[type] ?? 'bg-gray-100 text-gray-500'}`}>
+      {TYPE_LABELS[type] ?? type}
+    </span>
+  );
+}
+
+function ChargeRow({ charge }: { charge: any }) {
+  return (
+    <tr className="bg-orange-50/60 border-b border-orange-100">
+      <td className="pl-12 pr-3 py-2 text-gray-400 text-xs whitespace-nowrap">{fmtDate(charge.date)}</td>
+      <td className="px-3 py-2" colSpan={2}>
+        <div className="flex items-center gap-2">
+          <TypeBadge type={charge.transaction_type} />
+          <span className="text-xs text-gray-500 truncate max-w-xs">{charge.description || '—'}</span>
+        </div>
+      </td>
+      <td className="px-3 py-2 text-right font-mono text-xs text-red-500 whitespace-nowrap">
+        {charge.debit != null ? fmtNum(charge.debit) : ''}
+      </td>
+      <td className="px-3 py-2 text-right font-mono text-xs text-green-600 whitespace-nowrap">
+        {charge.credit != null ? fmtNum(charge.credit) : ''}
+      </td>
+      <td className="px-3 py-2" />
+    </tr>
+  );
+}
+
+function TxRow({ tx }: { tx: any }) {
+  const [expanded, setExpanded] = useState(false);
+  const hasCharges = tx.charges && tx.charges.length > 0;
+
+  return (
+    <>
+      <tr className={`hover:bg-gray-50 ${hasCharges ? 'cursor-pointer' : ''}`}
+          onClick={hasCharges ? () => setExpanded(e => !e) : undefined}>
+        <td className="px-4 py-3 text-gray-500 text-sm whitespace-nowrap">
+          <div className="flex items-center gap-1.5">
+            {hasCharges ? (
+              expanded ? <ChevronDown size={13} className="text-gray-400 shrink-0" /> : <ChevronRight size={13} className="text-gray-400 shrink-0" />
+            ) : <span className="w-3.5" />}
+            {fmtDate(tx.date)}
+          </div>
+        </td>
+        <td className="px-4 py-3">
+          <div className="flex flex-col gap-1 min-w-0">
+            <div className="flex items-center gap-1.5 flex-wrap">
+              {tx.bank_detected && <BankBadge bank={tx.bank_detected} />}
+              {tx.transaction_type && <TypeBadge type={tx.transaction_type} />}
+            </div>
+            {tx.counterparty && (
+              <span className="font-semibold text-gray-900 text-sm leading-tight truncate max-w-sm" title={tx.counterparty}>
+                {tx.counterparty}
+              </span>
+            )}
+            {tx.description && (
+              <span className="text-xs text-gray-400 truncate max-w-sm" title={tx.description}>
+                {tx.description}
+              </span>
+            )}
+            {tx.fx_original_amount && (
+              <span className="text-[11px] text-amber-600 font-mono">
+                {tx.fx_original_currency} {fmtNum(tx.fx_original_amount)}
+                {tx.fx_rate ? ` @ ${tx.fx_rate}` : ''}
+              </span>
+            )}
+          </div>
+        </td>
+        <td className="px-4 py-3 text-gray-400 font-mono text-xs whitespace-nowrap max-w-[140px]">
+          <span className="block truncate" title={tx.ref}>{tx.ref || '—'}</span>
+        </td>
+        <td className="px-4 py-3 text-right font-mono font-semibold text-red-600 whitespace-nowrap">
+          {tx.debit != null ? fmtNum(tx.debit) : ''}
+        </td>
+        <td className="px-4 py-3 text-right font-mono font-semibold text-green-600 whitespace-nowrap">
+          {tx.credit != null ? fmtNum(tx.credit) : ''}
+        </td>
+        <td className="px-4 py-3 text-right font-mono text-gray-700 whitespace-nowrap">
+          {fmtNum(tx.balance)}
+        </td>
+      </tr>
+      {expanded && hasCharges && tx.charges.map((c: any) => <ChargeRow key={c.id} charge={c} />)}
+    </>
+  );
 }
 
 export default function BankStatementDetail() {
@@ -47,6 +187,7 @@ export default function BankStatementDetail() {
   const displayed = search.trim()
     ? transactions.filter(t =>
         (t.description ?? '').toLowerCase().includes(search.toLowerCase()) ||
+        (t.counterparty ?? '').toLowerCase().includes(search.toLowerCase()) ||
         (t.ref ?? '').toLowerCase().includes(search.toLowerCase()),
       )
     : transactions;
@@ -104,10 +245,10 @@ export default function BankStatementDetail() {
                   <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" />
                   <input
                     type="text"
-                    placeholder="Search description / ref..."
+                    placeholder="Search counterparty / description / ref..."
                     value={search}
                     onChange={(e) => setSearch(e.target.value)}
-                    className="border border-gray-300 rounded-lg pl-8 pr-3 py-1.5 text-sm w-60 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    className="border border-gray-300 rounded-lg pl-8 pr-3 py-1.5 text-sm w-72 focus:outline-none focus:ring-2 focus:ring-blue-500"
                   />
                 </div>
               </div>
@@ -118,54 +259,38 @@ export default function BankStatementDetail() {
             <table className="w-full text-sm">
               <thead>
                 <tr className="bg-gray-50 text-left">
-                  <th className="px-5 py-3 text-xs font-medium text-gray-500">Date</th>
-                  <th className="px-5 py-3 text-xs font-medium text-gray-500">Description</th>
-                  <th className="px-5 py-3 text-xs font-medium text-gray-500">Reference</th>
-                  <th className="px-5 py-3 text-xs font-medium text-gray-500 text-right">Debit</th>
-                  <th className="px-5 py-3 text-xs font-medium text-gray-500 text-right">Credit</th>
-                  <th className="px-5 py-3 text-xs font-medium text-gray-500 text-right">Balance</th>
+                  <th className="px-4 py-3 text-xs font-medium text-gray-500 whitespace-nowrap">Date</th>
+                  <th className="px-4 py-3 text-xs font-medium text-gray-500">Details</th>
+                  <th className="px-4 py-3 text-xs font-medium text-gray-500">Reference</th>
+                  <th className="px-4 py-3 text-xs font-medium text-gray-500 text-right">Debit</th>
+                  <th className="px-4 py-3 text-xs font-medium text-gray-500 text-right">Credit</th>
+                  <th className="px-4 py-3 text-xs font-medium text-gray-500 text-right">Balance</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-100">
-                {displayed.map((t: any) => (
-                  <tr key={t.id} className="hover:bg-gray-50">
-                    <td className="px-5 py-3 text-gray-500 whitespace-nowrap">{fmtDate(t.date)}</td>
-                    <td className="px-5 py-3 text-gray-800 max-w-xs">
-                      <span className="block truncate" title={t.description}>{t.description || '—'}</span>
-                    </td>
-                    <td className="px-5 py-3 text-gray-400 font-mono text-xs whitespace-nowrap">
-                      {t.ref ? t.ref.replace(/^'|'$/g, '') : '—'}
-                    </td>
-                    <td className="px-5 py-3 text-right font-mono font-medium text-red-600 whitespace-nowrap">
-                      {t.debit != null ? fmtNum(t.debit) : ''}
-                    </td>
-                    <td className="px-5 py-3 text-right font-mono font-medium text-green-600 whitespace-nowrap">
-                      {t.credit != null ? fmtNum(t.credit) : ''}
-                    </td>
-                    <td className="px-5 py-3 text-right font-mono text-gray-700 whitespace-nowrap">
-                      {fmtNum(t.balance)}
-                    </td>
-                  </tr>
-                ))}
-                {page === pages && !search && transactions.length > 0 && (() => {
+                {loading && (
+                  <tr><td colSpan={6} className="px-6 py-8 text-center text-gray-400 text-sm">Loading…</td></tr>
+                )}
+                {!loading && displayed.map((t: any) => <TxRow key={t.id} tx={t} />)}
+                {!loading && page === pages && !search && transactions.length > 0 && (() => {
                   const earliest = transactions[transactions.length - 1];
                   const openingBal = Number(earliest.balance ?? 0)
                     - Number(earliest.credit ?? 0)
                     + Number(earliest.debit ?? 0);
                   return (
                     <tr className="bg-gray-50 border-t-2 border-gray-200">
-                      <td className="px-5 py-3 text-gray-400 text-xs italic whitespace-nowrap">{fmtDate(earliest.date)}</td>
-                      <td className="px-5 py-3 text-gray-500 text-xs italic font-medium">Opening Balance</td>
-                      <td className="px-5 py-3" />
-                      <td className="px-5 py-3" />
-                      <td className="px-5 py-3" />
-                      <td className="px-5 py-3 text-right font-mono font-semibold text-gray-700 whitespace-nowrap">
+                      <td className="px-4 py-3 text-gray-400 text-xs italic whitespace-nowrap pl-9">{fmtDate(earliest.date)}</td>
+                      <td className="px-4 py-3 text-gray-500 text-xs italic font-medium">Opening Balance</td>
+                      <td className="px-4 py-3" />
+                      <td className="px-4 py-3" />
+                      <td className="px-4 py-3" />
+                      <td className="px-4 py-3 text-right font-mono font-semibold text-gray-700 whitespace-nowrap">
                         {fmtNum(openingBal.toFixed(2))}
                       </td>
                     </tr>
                   );
                 })()}
-                {displayed.length === 0 && !loading && (
+                {!loading && displayed.length === 0 && (
                   <tr><td colSpan={6} className="px-6 py-8 text-center text-gray-400">
                     {search ? `No transactions matching "${search}"` : 'No transactions'}
                   </td></tr>
@@ -174,13 +299,12 @@ export default function BankStatementDetail() {
             </table>
           </div>
 
-          {/* Pagination */}
           {pages > 1 && (
             <div className="flex items-center justify-between px-5 py-3 border-t border-gray-100 text-sm text-gray-500">
               <span>Page {page} of {pages}</span>
               <div className="flex gap-2">
-                <Button variant="ghost" size="sm" onClick={() => load(page - 1)} disabled={page <= 1}>Previous</Button>
-                <Button variant="ghost" size="sm" onClick={() => load(page + 1)} disabled={page >= pages}>Next</Button>
+                <Button variant="ghost" size="sm" onClick={() => load(page - 1)} disabled={page <= 1 || loading}>Previous</Button>
+                <Button variant="ghost" size="sm" onClick={() => load(page + 1)} disabled={page >= pages || loading}>Next</Button>
               </div>
             </div>
           )}

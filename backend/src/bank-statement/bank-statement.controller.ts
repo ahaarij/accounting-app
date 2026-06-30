@@ -1,8 +1,8 @@
 import {
   Controller, Get, Post, Patch, Delete, Param, Body, Query,
-  UploadedFile, UseInterceptors, UseGuards, BadRequestException, ParseIntPipe,
+  UploadedFile, UploadedFiles, UseInterceptors, UseGuards, BadRequestException, ParseIntPipe,
 } from '@nestjs/common';
-import { FileInterceptor } from '@nestjs/platform-express';
+import { FileInterceptor, FilesInterceptor } from '@nestjs/platform-express';
 import { memoryStorage } from 'multer';
 import { BankStatementService } from './bank-statement.service';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
@@ -69,19 +69,23 @@ export class BankStatementController {
   @Post('import-pdf')
   @UseGuards(RolesGuard)
   @Roles('super_admin', 'admin', 'developer')
-  @UseInterceptors(FileInterceptor('file', { storage: memoryStorage() }))
-  importPDF(
-    @UploadedFile() file: Express.Multer.File,
-    @Body('accountId') accountId?: string,
+  @UseInterceptors(FilesInterceptor('files', 20, { storage: memoryStorage() }))
+  async importPDF(
+    @UploadedFiles() files: Express.Multer.File[],
     @Body('password') password?: string,
   ) {
-    if (!file) throw new BadRequestException('No file uploaded');
-    return this.svc.importPDF(
-      file.buffer,
-      file.originalname,
-      accountId ? parseInt(accountId) : undefined,
-      password || undefined,
-    );
+    if (!files?.length) throw new BadRequestException('No files uploaded');
+    const results = [];
+    for (const file of files) {
+      const result = await this.svc.importPDF(
+        file.buffer,
+        file.originalname,
+        undefined,
+        password || undefined,
+      );
+      results.push(result);
+    }
+    return results;
   }
 
   // ── PDF preview (extract text only, no DB write) ─────────────────────────────
