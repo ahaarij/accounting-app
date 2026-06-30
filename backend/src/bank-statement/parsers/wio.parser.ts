@@ -26,16 +26,36 @@ export function parseWio(pages: string[]): ParsedStatement {
   const periodFrom = periodMatch ? parseDate(periodMatch[1]) : null;
   const periodTo   = periodMatch ? parseDate(periodMatch[2]) : null;
 
-  // ── Split into per-account sections ──────────────────────────────────────
-  const sectionSplitter = /ACCOUNT STATEMENT\s*\n/gi;
-  const sectionStarts: number[] = [];
-  let sm2: RegExpExecArray | null;
-  while ((sm2 = sectionSplitter.exec(fullText)) !== null) {
-    sectionStarts.push(sm2.index);
+  // ── Split into per-account sections by page currency ─────────────────────
+  // Each transaction page starts with "( )\tAED" or "( )\tUSD". Grouping by
+  // per-page currency is more reliable than splitting by "ACCOUNT STATEMENT"
+  // text, which repeats mid-file and creates mixed-currency sections.
+  //
+  // WIO PDFs don't always use form-feed page breaks (pdf-parse may produce one
+  // contiguous string). Split by the "-- N of M --" page-number markers that
+  // WIO embeds in every statement so each logical page is a separate chunk.
+  let effectivePages = pages;
+  if (pages.length === 1) {
+    const markerSplit = pages[0].split(/--\s*\d+\s+of\s+\d+\s*--/);
+    if (markerSplit.length > 1) effectivePages = markerSplit;
   }
 
-  const sections: string[] = sectionStarts.length > 0
-    ? sectionStarts.map((start, i) => fullText.slice(start, sectionStarts[i + 1] ?? fullText.length))
+  const PAGE_CCY_RE = /\(\s*\)\s*[\t ]+(AED|USD|EUR)/;
+  interface PageGroup { currency: string; pageTexts: string[]; }
+  const pageGroups: PageGroup[] = [];
+  for (const page of effectivePages) {
+    const ccyM = page.match(PAGE_CCY_RE);
+    if (!ccyM) continue; // summary/title page — no transactions
+    const ccy = ccyM[1];
+    const last = pageGroups[pageGroups.length - 1];
+    if (last?.currency === ccy) {
+      last.pageTexts.push(page);
+    } else {
+      pageGroups.push({ currency: ccy, pageTexts: [page] });
+    }
+  }
+  const sections: string[] = pageGroups.length > 0
+    ? pageGroups.map(g => g.pageTexts.join('\n'))
     : [fullText];
 
   const accounts: ParsedAccount[] = [];

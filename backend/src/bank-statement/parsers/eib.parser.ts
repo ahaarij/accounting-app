@@ -39,6 +39,9 @@ export function parseEIB(pages: string[]): ParsedStatement {
   const transactions: ParsedTransaction[] = [];
   let i = 0;
 
+  // Page-header lines that appear between a TX line and its continuation on the next page
+  const PAGE_HEADER_RE = /^(Narration Running|Balance|Value Date|Transaction|Date Credit)/i;
+
   while (i < lines.length) {
     const line = lines[i];
     const m = line.match(DATE_NUMS_LINE);
@@ -55,8 +58,32 @@ export function parseEIB(pages: string[]): ParsedStatement {
     i++;
     const narrationLines: string[] = [];
     while (i < lines.length && !lines[i].match(DATE_NUMS_LINE)) {
-      if (lines[i]) narrationLines.push(lines[i]);
+      if (lines[i] && !PAGE_HEADER_RE.test(lines[i])) narrationLines.push(lines[i]);
       i++;
+    }
+
+    // EIB page-break: the TX line is repeated at the top of the next page.
+    // Detect by matching all key fields of the previous transaction.
+    const prev = transactions[transactions.length - 1];
+    if (
+      prev &&
+      prev.date === txDate &&
+      (prev.credit ?? 0) === (creditVal ?? 0) &&
+      (prev.debit ?? 0) === (debitVal ?? 0) &&
+      prev.running_balance === balance
+    ) {
+      // Append any new narration info (payment purpose, beneficiary) to the existing tx
+      const addl = cleanText(narrationLines.join(' '));
+      if (addl) {
+        const combinedNarration = prev.narration
+          ? cleanText(prev.narration + ' ' + addl)
+          : addl;
+        const reparsed = parseEIBNarration(combinedNarration);
+        prev.narration = reparsed.description ?? combinedNarration;
+        if (reparsed.counterparty && !prev.counterparty) prev.counterparty = reparsed.counterparty;
+        if (reparsed.transaction_type !== 'OTHER') prev.transaction_type = reparsed.transaction_type;
+      }
+      continue;
     }
 
     const rawNarration = cleanText(narrationLines.join(' '));

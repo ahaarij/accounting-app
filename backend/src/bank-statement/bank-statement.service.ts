@@ -404,7 +404,7 @@ export class BankStatementService {
       .where('t.csv_account_id = :accountId', { accountId })
       .andWhere('t.parent_transaction_id IS NULL')
       .orderBy('t.date', 'DESC')
-      .addOrderBy('t.id', 'DESC')
+      .addOrderBy('t.id', 'ASC')
       .skip((page - 1) * limit)
       .take(limit);
 
@@ -509,7 +509,7 @@ export class BankStatementService {
       ])
       .where('a.company_name ILIKE :pattern', { pattern: `%${search}%` })
       .orderBy('t.date', 'DESC')
-      .addOrderBy('t.id', 'DESC');
+      .addOrderBy('t.id', 'ASC');
 
     if (currency) qb.andWhere('a.currency = :currency', { currency });
     if (startDate) qb.andWhere('t.date >= :startDate', { startDate });

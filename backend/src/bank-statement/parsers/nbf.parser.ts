@@ -80,7 +80,8 @@ export function parseNBF(pages: string[]): ParsedStatement {
     rest = rest.trim();
 
     // Extract the first two decimal numbers — these are Balance and Amount (before the text)
-    const leadingNums = rest.match(/^([\d,]+\.\d{2})\s+([\d,]+\.\d{2})\s+(.*)/s);
+    // Balance may be negative (overdraft), hence -? on the first capture group
+    const leadingNums = rest.match(/^(-?[\d,]+\.\d{2})\s+(-?[\d,]+\.\d{2})\s+(.*)/s);
 
     let balance: number | null = null;
     let debit: number | null = null;
@@ -112,7 +113,7 @@ export function parseNBF(pages: string[]): ParsedStatement {
       }
     } else {
       // Only one number or no numbers — just take what's there
-      const singleNum = rest.match(/^([\d,]+\.\d{2})\s+(.*)/s);
+      const singleNum = rest.match(/^(-?[\d,]+\.\d{2})\s+(.*)/s);
       if (singleNum) {
         balance = parseNum(singleNum[1]);
         textPart = singleNum[2];

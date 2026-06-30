@@ -138,8 +138,18 @@ function TxRow({ tx }: { tx: any }) {
         <td className="px-4 py-3 text-gray-400 font-mono text-xs whitespace-nowrap max-w-[140px]">
           <span className="block truncate" title={tx.ref}>{tx.ref || '—'}</span>
         </td>
-        <td className="px-4 py-3 text-right font-mono font-semibold text-red-600 whitespace-nowrap">
-          {tx.debit != null ? fmtNum(tx.debit) : ''}
+        <td className="px-4 py-3 text-right font-mono whitespace-nowrap">
+          {tx.debit != null ? (
+            <div className="flex flex-col items-end leading-tight">
+              <span className="font-semibold text-red-600">{fmtNum(tx.debit)}</span>
+              {hasCharges && (() => {
+                const feeTotal = tx.charges.reduce((s: number, c: any) => s + (c.debit ?? 0), 0);
+                return feeTotal > 0 ? (
+                  <span className="text-[11px] text-orange-500 font-normal">+{fmtNum(feeTotal)} fees</span>
+                ) : null;
+              })()}
+            </div>
+          ) : ''}
         </td>
         <td className="px-4 py-3 text-right font-mono font-semibold text-green-600 whitespace-nowrap">
           {tx.credit != null ? fmtNum(tx.credit) : ''}

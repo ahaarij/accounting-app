@@ -52,7 +52,13 @@ export function parseADCB(pages: string[]): ParsedStatement {
   const flushBlock = () => {
     if (blockLines.length === 0) return;
 
-    const blockText = blockLines.join(' ');
+    // Strip page-boundary garbage before building description text:
+    // -- N of M -- markers and column-header repeat lines get appended to the
+    // last block on each page when the Sr.No header is re-encountered.
+    const PAGE_MARKER_RE = /^--\s*\d+\s+of\s+\d+\s*--$/;
+    const COL_HEADER_RE = /^(Reference|No|Customer|Description|Debit Amount|Credit Amount|Running|Balance)$/i;
+    const cleanLines = blockLines.filter(l => !PAGE_MARKER_RE.test(l) && !COL_HEADER_RE.test(l));
+    const blockText = cleanLines.join(' ');
 
     // Extract two dates: first = transaction date, second = value date
     const dates = [...blockText.matchAll(/\d{2}-[A-Za-z]{3}-\d{4}/g)].map(m => m[0]);
@@ -60,9 +66,14 @@ export function parseADCB(pages: string[]): ParsedStatement {
     const valueDate = dates[1] ? parseADCBDate(dates[1]) : null;
     if (!date) return;
 
-    // Amounts: find the pattern in the LAST non-empty block line
-    const lastLine = blockLines[blockLines.length - 1].trim();
-    const amtM = lastLine.match(AMOUNTS_RE);
+    // Amounts: scan from the end of the block to find the amounts line.
+    // Page-break garbage (-- N of M -- marker, column-header repeats) can get
+    // appended after the real amounts line, so we can't assume it's the last.
+    let amtM: RegExpMatchArray | null = null;
+    for (let k = blockLines.length - 1; k >= 0; k--) {
+      amtM = blockLines[k].trim().match(AMOUNTS_RE);
+      if (amtM) break;
+    }
     if (!amtM) return;
 
     const debit = amtM[1] ? parseNum(amtM[1]) : null;
