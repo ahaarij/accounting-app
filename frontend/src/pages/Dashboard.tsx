@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { Layout, PageHeader } from '../components/Layout';
 import { Card, CardHeader, CardBody } from '../components/ui/card';
 import { Badge } from '../components/ui/badge';
-import { getSummary, getFlags, getBankAccounts, getNetPosition } from '../api';
+import { getCsvAccountsStats, getBankStatementBalanceTrend } from '../api';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from 'recharts';
 import { AlertTriangle, CheckCircle, XCircle, ChevronRight, Landmark, Building2, X } from 'lucide-react';
 import { fetchCashDeposits } from '../api/cashDeposits';
@@ -108,7 +108,7 @@ function MonthPicker({ value, onChange }: { value: string; onChange: (v: string)
   );
 }
 
-const netPositionCache: Record<number, { date: string; aed: number; usd: number }[]> = {};
+const balanceTrendCache: Record<number, { date: string; aed: number; usd: number }[]> = {};
 
 function currentMonthStr(): string {
   const d = new Date();
@@ -148,11 +148,10 @@ type ViewMode = 'accounts' | 'banks' | 'companies';
 
 export default function Dashboard() {
   const navigate = useNavigate();
-  const [flags, setFlags]       = useState<any[]>([]);
   const [accounts, setAccounts] = useState<any[]>([]);
   const [loading, setLoading]         = useState(true);
   const [viewMode, setViewMode]       = useState<ViewMode>('accounts');
-  const [netPosition, setNetPosition] = useState<{ date: string; aed: number; usd: number }[]>([]);
+  const [balanceTrend, setBalanceTrend] = useState<{ date: string; aed: number; usd: number }[]>([]);
   const [chartCcy, setChartCcy]         = useState<'AED' | 'USD' | 'both'>('AED');
   const [chartPeriod, setChartPeriod]   = useState<30 | 365>(30);
   const [chartLoading, setChartLoading] = useState(true);
@@ -168,21 +167,21 @@ export default function Dashboard() {
   const depositMousePos = useRef({ x: 0, y: 0 });
 
   useEffect(() => {
-    Promise.all([getSummary(), getFlags(undefined, false), getBankAccounts()])
-      .then(([, f, a]) => { setFlags(f.data); setAccounts(a.data); })
+    getCsvAccountsStats()
+      .then(a => setAccounts(a.data))
       .finally(() => setLoading(false));
   }, []);
 
   useEffect(() => {
-    if (netPositionCache[chartPeriod]) {
-      setNetPosition(netPositionCache[chartPeriod]);
+    if (balanceTrendCache[chartPeriod]) {
+      setBalanceTrend(balanceTrendCache[chartPeriod]);
       setChartLoading(false);
       return;
     }
     setChartLoading(true);
-    getNetPosition(chartPeriod).then(res => {
-      netPositionCache[chartPeriod] = res.data;
-      setNetPosition(res.data);
+    getBankStatementBalanceTrend(chartPeriod).then(res => {
+      balanceTrendCache[chartPeriod] = res.data;
+      setBalanceTrend(res.data);
     }).finally(() => setChartLoading(false));
   }, [chartPeriod]);
 
@@ -199,11 +198,11 @@ export default function Dashboard() {
   }, [depositMonth]);
 
   const totalAed = useMemo(
-    () => accounts.filter(a => a.currency === 'AED' && Number(a.closing_balance) > 0).reduce((s, a) => s + Number(a.closing_balance), 0),
+    () => accounts.filter(a => a.currency === 'AED' && Number(a.latest_balance) > 0).reduce((s, a) => s + Number(a.latest_balance), 0),
     [accounts],
   );
   const totalUsd = useMemo(
-    () => accounts.filter(a => a.currency === 'USD' && Number(a.closing_balance) > 0).reduce((s, a) => s + Number(a.closing_balance), 0),
+    () => accounts.filter(a => a.currency === 'USD' && Number(a.latest_balance) > 0).reduce((s, a) => s + Number(a.latest_balance), 0),
     [accounts],
   );
 
@@ -214,14 +213,14 @@ export default function Dashboard() {
   }, []);
 
   const isActive = (acc: any) => {
-    if (!acc.last_transaction_date) return false;
-    return new Date(acc.last_transaction_date) >= cutoff;
+    if (!acc.latest_date) return false;
+    return new Date(acc.latest_date) >= cutoff;
   };
 
   const groupStats = useMemo(() => {
     const pos = (active: boolean, ccy: string) =>
-      accounts.filter(a => isActive(a) === active && a.currency === ccy && Number(a.closing_balance) > 0)
-               .reduce((s, a) => s + Number(a.closing_balance), 0);
+      accounts.filter(a => isActive(a) === active && a.currency === ccy && Number(a.latest_balance) > 0)
+               .reduce((s, a) => s + Number(a.latest_balance), 0);
     return {
       aAed: pos(true,  'AED'), aUsd: pos(true,  'USD'), aCount: accounts.filter(a => isActive(a)).length,
       bAed: pos(false, 'AED'), bUsd: pos(false, 'USD'), bCount: accounts.filter(a => !isActive(a)).length,
@@ -229,22 +228,22 @@ export default function Dashboard() {
   }, [accounts, cutoff]);
 
   const byBank = useMemo(() => {
-    const groups: Record<string, { bank_name: string; currency: string; group: string; total: number; count: number }> = {};
+    const groups: Record<string, { bank_name: string; currency: string; total: number; count: number }> = {};
     accounts.forEach(acc => {
-      const key = `${acc.bank_name}__${acc.currency}__${acc.group}`;
-      if (!groups[key]) groups[key] = { bank_name: acc.bank_name, currency: acc.currency, group: acc.group, total: 0, count: 0 };
-      groups[key].total += Number(acc.closing_balance);
+      const key = `${acc.bank_name}__${acc.currency}`;
+      if (!groups[key]) groups[key] = { bank_name: acc.bank_name, currency: acc.currency, total: 0, count: 0 };
+      groups[key].total += Number(acc.latest_balance) || 0;
       groups[key].count += 1;
     });
     return Object.values(groups).sort((a, b) => b.total - a.total);
   }, [accounts]);
 
   const byCompany = useMemo(() => {
-    const groups: Record<string, { name: string; group: string; aed: number; usd: number; eur: number; accountCount: number }> = {};
+    const groups: Record<string, { name: string; aed: number; usd: number; eur: number; accountCount: number }> = {};
     accounts.forEach(acc => {
-      const name = acc.account_name;
-      if (!groups[name]) groups[name] = { name, group: acc.group ?? '', aed: 0, usd: 0, eur: 0, accountCount: 0 };
-      const bal = Number(acc.closing_balance);
+      const name = acc.company_name;
+      if (!groups[name]) groups[name] = { name, aed: 0, usd: 0, eur: 0, accountCount: 0 };
+      const bal = Number(acc.latest_balance) || 0;
       if (acc.currency === 'AED')      groups[name].aed += bal;
       else if (acc.currency === 'USD') groups[name].usd += bal;
       else if (acc.currency === 'EUR') groups[name].eur += bal;
@@ -275,35 +274,20 @@ export default function Dashboard() {
     return idx;
   }, [depositRawRows]);
 
-  const criticalCount = flags.filter(f => f.severity === 'critical').length;
-  const warningCount  = flags.filter(f => f.severity === 'warning').length;
-
   const kpis = [
-    { label: 'Total AED',      value: `AED ${fmt(totalAed)}`,       color: 'text-emerald-600', bg: 'bg-emerald-50' },
-    { label: 'Total USD',      value: `USD ${fmt(totalUsd)}`,       color: 'text-blue-600',    bg: 'bg-blue-50'    },
-    { label: 'Critical Flags', value: criticalCount.toString(),     color: 'text-red-600',     bg: 'bg-red-50'     },
-    { label: 'Warnings',       value: warningCount.toString(),      color: 'text-amber-600',   bg: 'bg-amber-50'   },
+    { label: 'Total AED', value: `AED ${fmt(totalAed)}`, color: 'text-emerald-600', bg: 'bg-emerald-50' },
+    { label: 'Total USD', value: `USD ${fmt(totalUsd)}`, color: 'text-blue-600',    bg: 'bg-blue-50'    },
   ];
 
-  const goToFlag = (flag: any) => {
-    const dest = FLAG_DESTINATIONS[flag.flag_type];
-    if (dest === '/cash-ledger') {
-      navigate('/cash-ledger', {
-        state: { highlightTransactionId: flag.daily_transaction_id, highlightDate: flag.date, severity: flag.severity, description: flag.description },
-      });
-      return;
-    }
-    if (dest) { navigate(dest); return; }
-    if (flag.bank_account_id) {
-      navigate(`/accounts/${flag.bank_account_id}`, {
-        state: { highlightDate: flag.date, severity: flag.severity, description: flag.description },
-      });
+  const goToFlag = (_flag: any) => {
+    navigate('/flags');
+    if (false as any) {
     } else {
       navigate('/flags');
     }
   };
 
-  const chartData = netPosition.map(r => ({
+  const chartData = balanceTrend.map(r => ({
     date: r.date.slice(5),
     AED: r.aed,
     USD: r.usd,
@@ -325,7 +309,7 @@ export default function Dashboard() {
       <div className="p-8 space-y-6">
 
         {/* KPI cards */}
-        <div className="grid grid-cols-4 gap-4">
+        <div className="grid grid-cols-2 gap-4">
           {kpis.map(({ label, value, color, bg }) => (
             <Card key={label}>
               <CardBody className={`flex items-center gap-4 rounded-xl ${bg}`}>
@@ -372,7 +356,7 @@ export default function Dashboard() {
         <Card>
           <CardHeader>
             <div className="flex items-center justify-between">
-              <p className="font-medium text-gray-900 text-sm">Net position — {chartPeriod === 30 ? 'last 30 days' : 'last year'}</p>
+              <p className="font-medium text-gray-900 text-sm">Balance trend — {chartPeriod === 30 ? 'last 30 days' : 'last year'}</p>
               <div className="flex items-center gap-3">
                 <div className="flex gap-1">
                   {([30, 365] as const).map(v => (
@@ -532,7 +516,7 @@ export default function Dashboard() {
           </CardBody>
         </Card>
 
-        <div className="grid grid-cols-2 gap-6">
+        <div className="grid grid-cols-1 gap-6">
           {/* Accounts panel with 3-tab view */}
           <Card>
             <CardHeader>
@@ -558,22 +542,19 @@ export default function Dashboard() {
             {viewMode === 'accounts' && (
               <div className="divide-y divide-gray-100 max-h-96 overflow-y-auto">
                 {accounts.map((acc: any) => (
-                  <button key={acc.id} onClick={() => navigate(`/accounts/${acc.id}`)}
+                  <button key={acc.id} onClick={() => navigate('/bank-statements')}
                     className="flex items-center justify-between w-full px-6 py-3 hover:bg-gray-50 text-left transition-colors">
                     <div className="min-w-0 flex-1">
-                      <div className="flex items-center gap-1.5">
-                        <p className="text-sm font-semibold text-gray-900 truncate">{acc.account_name}</p>
-                        {acc.group && <GroupBadge group={acc.group} />}
-                      </div>
+                      <p className="text-sm font-semibold text-gray-900 truncate">{acc.company_name}</p>
                       <p className="text-xs text-gray-600">
-                        {[acc.bank_name, acc.currency && `(${acc.currency})`].filter(Boolean).join(' ') || acc.account_code || '—'}
+                        {[acc.bank_name, acc.currency && `(${acc.currency})`].filter(Boolean).join(' ') || '—'}
                       </p>
                     </div>
                     <div className="text-right ml-3 shrink-0">
-                      <p className={`text-sm font-mono ${Number(acc.closing_balance) === 0 ? 'text-gray-300' : 'text-gray-700'}`}>
-                        {fmt(Number(acc.closing_balance))}
+                      <p className={`text-sm font-mono ${!acc.latest_balance || Number(acc.latest_balance) === 0 ? 'text-gray-300' : 'text-gray-700'}`}>
+                        {fmt(Number(acc.latest_balance) || 0)}
                       </p>
-                      <Badge label={acc.status || 'active'} variant={acc.status === 'active' ? 'success' : 'warning'} />
+                      <Badge label={isActive(acc) ? 'active' : 'inactive'} variant={isActive(acc) ? 'success' : 'warning'} />
                     </div>
                   </button>
                 ))}
@@ -589,14 +570,13 @@ export default function Dashboard() {
                     <tr>
                       <th className="text-left px-6 py-2 text-xs font-medium text-gray-500">Bank</th>
                       <th className="text-left px-2 py-2 text-xs font-medium text-gray-500">CCY</th>
-                      <th className="text-left px-2 py-2 text-xs font-medium text-gray-500">Grp</th>
                       <th className="text-right px-2 py-2 text-xs font-medium text-gray-500">Accts</th>
                       <th className="text-right px-6 py-2 text-xs font-medium text-gray-500">Total Balance</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-gray-50">
                     {byBank.map(row => (
-                      <tr key={`${row.bank_name}__${row.currency}__${row.group}`} className="hover:bg-gray-50">
+                      <tr key={`${row.bank_name}__${row.currency}`} className="hover:bg-gray-50">
                         <td className="px-6 py-3 font-medium text-gray-800">{row.bank_name}</td>
                         <td className="px-2 py-3">
                           <span className={`text-xs font-semibold px-1.5 py-0.5 rounded ${
@@ -605,7 +585,6 @@ export default function Dashboard() {
                             'bg-purple-100 text-purple-700'
                           }`}>{row.currency}</span>
                         </td>
-                        <td className="px-2 py-3"><GroupBadge group={row.group} /></td>
                         <td className="px-2 py-3 text-right text-gray-500">{row.count}</td>
                         <td className={`px-6 py-3 text-right font-mono font-semibold ${row.total === 0 ? 'text-gray-300' : 'text-gray-800'}`}>
                           {fmt(row.total)}
@@ -613,17 +592,17 @@ export default function Dashboard() {
                       </tr>
                     ))}
                     {byBank.length === 0 && (
-                      <tr><td colSpan={5} className="px-6 py-8 text-center text-sm text-gray-400">No accounts imported yet</td></tr>
+                      <tr><td colSpan={4} className="px-6 py-8 text-center text-sm text-gray-400">No accounts imported yet</td></tr>
                     )}
                   </tbody>
                   {byBank.length > 0 && (
                     <tfoot className="border-t-2 border-gray-200 bg-gray-50">
                       <tr>
-                        <td colSpan={4} className="px-6 py-2 text-xs font-semibold text-gray-500">AED Total</td>
+                        <td colSpan={3} className="px-6 py-2 text-xs font-semibold text-gray-500">AED Total</td>
                         <td className="px-6 py-2 text-right font-mono font-bold text-emerald-700">{fmt(totalAed)}</td>
                       </tr>
                       <tr>
-                        <td colSpan={4} className="px-6 py-2 text-xs font-semibold text-gray-500">USD Total</td>
+                        <td colSpan={3} className="px-6 py-2 text-xs font-semibold text-gray-500">USD Total</td>
                         <td className="px-6 py-2 text-right font-mono font-bold text-blue-700">{fmt(totalUsd)}</td>
                       </tr>
                     </tfoot>
@@ -639,7 +618,6 @@ export default function Dashboard() {
                   <thead className="sticky top-0 bg-gray-50 border-b border-gray-100">
                     <tr>
                       <th className="text-left px-6 py-2 text-xs font-medium text-gray-500">Company</th>
-                      <th className="text-left px-2 py-2 text-xs font-medium text-gray-500">Grp</th>
                       <th className="text-right px-3 py-2 text-xs font-medium text-gray-500">Accts</th>
                       <th className="text-right px-3 py-2 text-xs font-medium text-gray-500">AED</th>
                       <th className="text-right px-6 py-2 text-xs font-medium text-gray-500">USD</th>
@@ -649,7 +627,6 @@ export default function Dashboard() {
                     {byCompany.map(row => (
                       <tr key={row.name} className="hover:bg-gray-50">
                         <td className="px-6 py-2.5 font-medium text-gray-800 max-w-[140px] truncate" title={row.name}>{row.name}</td>
-                        <td className="px-2 py-2.5"><GroupBadge group={row.group} /></td>
                         <td className="px-3 py-2.5 text-right text-gray-400 text-xs">{row.accountCount}</td>
                         <td className={`px-3 py-2.5 text-right font-mono text-xs ${row.aed === 0 ? 'text-gray-300' : 'text-emerald-700 font-semibold'}`}>
                           {row.aed === 0 ? '—' : fmt(row.aed)}
@@ -666,7 +643,7 @@ export default function Dashboard() {
                   {byCompany.length > 0 && (
                     <tfoot className="border-t-2 border-gray-200 bg-gray-50">
                       <tr>
-                        <td colSpan={3} className="px-6 py-2 text-xs font-semibold text-gray-500">Totals</td>
+                        <td colSpan={2} className="px-6 py-2 text-xs font-semibold text-gray-500">Totals</td>
                         <td className="px-3 py-2 text-right font-mono font-bold text-emerald-700 text-xs">{fmt(totalAed)}</td>
                         <td className="px-6 py-2 text-right font-mono font-bold text-blue-700 text-xs">{fmt(totalUsd)}</td>
                       </tr>
@@ -677,40 +654,6 @@ export default function Dashboard() {
             )}
           </Card>
 
-          {/* Open flags */}
-          <Card>
-            <CardHeader>
-              <div className="flex items-center justify-between">
-                <p className="font-medium text-gray-900 text-sm">Open flags ({flags.length})</p>
-                {flags.length > 0 && (
-                  <button onClick={() => navigate('/flags')} className="text-xs text-blue-600 hover:underline">View all</button>
-                )}
-              </div>
-            </CardHeader>
-            <div className="divide-y divide-gray-100 max-h-96 overflow-y-auto">
-              {flags.map((flag: any) => (
-                <button key={flag.id} onClick={() => goToFlag(flag)}
-                  className={`flex items-start gap-3 w-full px-6 py-3 text-left transition-colors hover:brightness-95 group ${SEVERITY_BORDER[flag.severity] ?? ''}`}>
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2 mb-0.5">
-                      <Badge label={flag.severity} variant={flag.severity} />
-                      <span className="text-xs text-gray-400">{flag.flag_type}</span>
-                    </div>
-                    <p className="text-xs text-gray-700 line-clamp-2">{flag.description}</p>
-                    {flag.account_name && <p className="text-xs text-gray-400 mt-0.5">{flag.account_name}</p>}
-                    <p className="text-xs text-gray-300 mt-0.5">{flag.date}</p>
-                  </div>
-                  <ChevronRight size={14} className="text-gray-300 group-hover:text-gray-500 mt-1 shrink-0" />
-                </button>
-              ))}
-              {flags.length === 0 && (
-                <div className="px-6 py-8 text-center">
-                  <CheckCircle size={20} className="text-green-500 mx-auto mb-2" />
-                  <p className="text-sm text-gray-400">No open flags</p>
-                </div>
-              )}
-            </div>
-          </Card>
         </div>
       </div>
 

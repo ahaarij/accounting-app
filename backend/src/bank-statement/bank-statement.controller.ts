@@ -132,6 +132,13 @@ export class BankStatementController {
     return this.svc.getCsvCompanyTransactions(search ?? '', currency, startDate, endDate, page ? parseInt(page) : 1);
   }
 
+  // ── Balance trend (chart) ─────────────────────────────────────────────────────
+
+  @Get('balance-trend')
+  getBalanceTrend(@Query('days') days?: string) {
+    return this.svc.getBalanceTrend(days ? parseInt(days) : 30);
+  }
+
   // ── Nuke all transactions ─────────────────────────────────────────────────────
 
   @Delete('transactions/all')

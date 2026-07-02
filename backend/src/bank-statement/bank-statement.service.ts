@@ -762,6 +762,39 @@ export class BankStatementService {
     return { deleted: result[1] ?? 0 };
   }
 
+  async getBalanceTrend(days: number): Promise<Array<{ date: string; aed: number; usd: number }>> {
+    const since = new Date();
+    since.setDate(since.getDate() - days);
+    const sinceStr = since.toISOString().slice(0, 10);
+
+    // For each account, take the last balance per day, then sum by currency per day
+    const rows = await this.txRepo.query(`
+      WITH daily_closing AS (
+        SELECT DISTINCT ON (t.csv_account_id, t.date)
+          t.date,
+          t.balance,
+          a.currency
+        FROM csv_transactions t
+        JOIN csv_accounts a ON a.id = t.csv_account_id
+        WHERE t.date >= $1 AND t.balance IS NOT NULL
+        ORDER BY t.csv_account_id, t.date, t.id DESC
+      )
+      SELECT
+        date,
+        SUM(CASE WHEN currency = 'AED' THEN balance ELSE 0 END) AS aed,
+        SUM(CASE WHEN currency = 'USD' THEN balance ELSE 0 END) AS usd
+      FROM daily_closing
+      GROUP BY date
+      ORDER BY date ASC
+    `, [sinceStr]);
+
+    return rows.map((r: any) => ({
+      date: r.date instanceof Date ? r.date.toISOString().slice(0, 10) : String(r.date).slice(0, 10),
+      aed: parseFloat(r.aed) || 0,
+      usd: parseFloat(r.usd) || 0,
+    }));
+  }
+
   private splitCSVLine(line: string): string[] {
     const result: string[] = [];
     let current = '';

@@ -65,6 +65,8 @@ export const updateCsvAccount = (id: number, data: Partial<{ account_number: str
   api.patch(`/bank-statements/accounts/${id}`, data);
 export const deleteCsvAccount = (id: number) => api.delete(`/bank-statements/accounts/${id}`);
 export const deleteAllBankStatements = () => api.delete('/bank-statements/transactions/all');
+export const getBankStatementBalanceTrend = (days = 30) =>
+  api.get<{ date: string; aed: number; usd: number }[]>('/bank-statements/balance-trend', { params: { days } });
 export const getCsvTransactions = (id: number, page = 1, startDate?: string, endDate?: string) =>
   api.get(`/bank-statements/accounts/${id}/transactions`, { params: { page, startDate, endDate } });
 export const importCsvFile = (file: File) => {

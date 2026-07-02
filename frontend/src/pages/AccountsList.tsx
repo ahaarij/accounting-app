@@ -3,7 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { Layout, PageHeader } from '../components/Layout';
 import { Card } from '../components/ui/card';
 import { Badge } from '../components/ui/badge';
-import { getBankAccounts } from '../api';
+import { getCsvAccountsStats } from '../api';
 import { ArrowLeft, ChevronRight } from 'lucide-react';
 
 function fmt(n: number) {
@@ -24,7 +24,7 @@ export default function AccountsList() {
   const isActive = type === 'active';
 
   useEffect(() => {
-    getBankAccounts()
+    getCsvAccountsStats()
       .then(r => setAccounts(r.data))
       .finally(() => setLoading(false));
   }, []);
@@ -38,22 +38,22 @@ export default function AccountsList() {
   const filtered = useMemo(() => {
     return accounts
       .filter(a => {
-        const hasRecentTx = a.last_transaction_date && new Date(a.last_transaction_date) >= cutoff;
+        const hasRecentTx = a.latest_date && new Date(a.latest_date) >= cutoff;
         return isActive ? hasRecentTx : !hasRecentTx;
       })
       .sort((a, b) => {
-        const da = a.last_transaction_date ? new Date(a.last_transaction_date).getTime() : 0;
-        const db = b.last_transaction_date ? new Date(b.last_transaction_date).getTime() : 0;
+        const da = a.latest_date ? new Date(a.latest_date).getTime() : 0;
+        const db = b.latest_date ? new Date(b.latest_date).getTime() : 0;
         return db - da;
       });
   }, [accounts, cutoff, isActive]);
 
   const totalAed = useMemo(
-    () => filtered.filter(a => a.currency === 'AED').reduce((s, a) => s + Number(a.closing_balance), 0),
+    () => filtered.filter(a => a.currency === 'AED').reduce((s, a) => s + (Number(a.latest_balance) || 0), 0),
     [filtered],
   );
   const totalUsd = useMemo(
-    () => filtered.filter(a => a.currency === 'USD').reduce((s, a) => s + Number(a.closing_balance), 0),
+    () => filtered.filter(a => a.currency === 'USD').reduce((s, a) => s + (Number(a.latest_balance) || 0), 0),
     [filtered],
   );
 
@@ -105,10 +105,9 @@ export default function AccountsList() {
               <table className="w-full text-sm">
                 <thead>
                   <tr className="bg-gray-50 border-b border-gray-100">
-                    <th className="text-left px-6 py-3 text-xs font-medium text-gray-500 uppercase tracking-wide">Account</th>
+                    <th className="text-left px-6 py-3 text-xs font-medium text-gray-500 uppercase tracking-wide">Company</th>
                     <th className="text-left px-4 py-3 text-xs font-medium text-gray-500 uppercase tracking-wide">Bank</th>
                     <th className="text-left px-4 py-3 text-xs font-medium text-gray-500 uppercase tracking-wide">CCY</th>
-                    <th className="text-left px-4 py-3 text-xs font-medium text-gray-500 uppercase tracking-wide">Grp</th>
                     <th className="text-left px-4 py-3 text-xs font-medium text-gray-500 uppercase tracking-wide">Last Transaction</th>
                     <th className="text-right px-6 py-3 text-xs font-medium text-gray-500 uppercase tracking-wide">Balance</th>
                     <th className="text-left px-4 py-3 text-xs font-medium text-gray-500 uppercase tracking-wide">Status</th>
@@ -119,14 +118,12 @@ export default function AccountsList() {
                   {filtered.map(acc => (
                     <tr
                       key={acc.id}
-                      onClick={() => navigate(`/accounts/${acc.id}`)}
+                      onClick={() => navigate(`/bank-statements/${acc.id}`)}
                       className="hover:bg-gray-50 cursor-pointer transition-colors"
                     >
                       <td className="px-6 py-3">
-                        <p className="font-semibold text-gray-900">{acc.account_name}</p>
-                        {acc.account_code && (
-                          <p className="text-xs text-gray-400 font-mono mt-0.5">{acc.account_code}</p>
-                        )}
+                        <p className="font-semibold text-gray-900">{acc.company_name}</p>
+                        <p className="text-xs text-gray-400 font-mono mt-0.5">{acc.account_number}</p>
                       </td>
                       <td className="px-4 py-3 text-gray-600">{acc.bank_name || '—'}</td>
                       <td className="px-4 py-3">
@@ -136,20 +133,13 @@ export default function AccountsList() {
                           'bg-purple-100 text-purple-700'
                         }`}>{acc.currency}</span>
                       </td>
-                      <td className="px-4 py-3">
-                        {acc.group && (
-                          <span className={`text-xs font-bold px-1 py-0.5 rounded ${
-                            acc.group === 'A' ? 'bg-indigo-100 text-indigo-700' : 'bg-orange-100 text-orange-700'
-                          }`}>{acc.group}</span>
-                        )}
-                      </td>
                       <td className="px-4 py-3 text-gray-500 text-xs">
-                        {fmtDate(acc.last_transaction_date)}
+                        {fmtDate(acc.latest_date)}
                       </td>
                       <td className={`px-6 py-3 text-right font-mono font-semibold ${
-                        Number(acc.closing_balance) === 0 ? 'text-gray-300' : 'text-gray-800'
+                        !acc.latest_balance || Number(acc.latest_balance) === 0 ? 'text-gray-300' : 'text-gray-800'
                       }`}>
-                        {fmt(Number(acc.closing_balance))}
+                        {fmt(Number(acc.latest_balance) || 0)}
                       </td>
                       <td className="px-4 py-3">
                         <Badge label={isActive ? 'active' : 'passive'} variant={isActive ? 'success' : 'warning'} />

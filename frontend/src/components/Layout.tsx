@@ -44,8 +44,8 @@ export function Layout({ children }: { children: ReactNode }) {
           {canEdit && (
             <>
               {[
-                { to: '/import', label: 'Import', icon: Upload },
-                { to: '/flags', label: 'Flags', icon: Flag },
+                // { to: '/import', label: 'Import', icon: Upload },
+                // { to: '/flags', label: 'Flags', icon: Flag },
                 { to: '/invoice-matching', label: 'Invoice Matching', icon: ReceiptText },
               { to: '/app-settings', label: 'Settings', icon: SlidersHorizontal },
               ].map(({ to, label, icon: Icon }) => (
@@ -113,7 +113,7 @@ export function Layout({ children }: { children: ReactNode }) {
           <button onClick={handleLogout} className="flex items-center gap-2 w-full px-2 py-1.5 text-slate-400 hover:text-white text-xs rounded-lg hover:bg-slate-800 transition-colors">
             <LogOut size={13} />Sign out
           </button>
-          <p className="text-slate-600 text-xs text-center mt-2">v1.3 (WORK IN PROGRESS)</p>
+          <p className="text-slate-600 text-xs text-center mt-2">v1.4 (WORK IN PROGRESS)</p>
         </div>
       </aside>
 
