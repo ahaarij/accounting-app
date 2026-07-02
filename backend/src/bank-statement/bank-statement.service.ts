@@ -757,6 +757,11 @@ export class BankStatementService {
 
   // ── Utilities ─────────────────────────────────────────────────────────────
 
+  async deleteAllTransactions(): Promise<{ deleted: number }> {
+    const result = await this.txRepo.query('DELETE FROM csv_transactions');
+    return { deleted: result[1] ?? 0 };
+  }
+
   private splitCSVLine(line: string): string[] {
     const result: string[] = [];
     let current = '';

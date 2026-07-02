@@ -63,13 +63,16 @@ export function parseFAB(pages: string[]): ParsedStatement {
 
     const afterAmt = rest.slice(amtMatch[0].length).trim();
 
-    // Balance: first standalone X.XX or X,XXX.XX number in the remaining text
-    const balMatch = afterAmt.match(/\b([\d,]+\.\d{2})\b/);
+    // Balance: first decimal number in afterAmt — supports negative (overdraft)
+    const balMatch = afterAmt.match(/(-?[\d,]+\.\d{2})/);
     const balance = balMatch ? parseNum(balMatch[1]) : null;
 
     // Description: tx_type + narrative code, between amount and balance
     const descPart = balMatch
-      ? afterAmt.slice(0, afterAmt.indexOf(balMatch[0])).replace(/^[\s\-–]+/, '').trim()
+      ? afterAmt.slice(0, afterAmt.indexOf(balMatch[0]))
+          .replace(/^[\s\-–]+/, '')
+          .replace(/[\s\-–]+$/, '')
+          .trim()
       : afterAmt;
     const rawNarrative = cleanText(descPart);
 

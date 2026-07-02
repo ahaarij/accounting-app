@@ -132,6 +132,15 @@ export class BankStatementController {
     return this.svc.getCsvCompanyTransactions(search ?? '', currency, startDate, endDate, page ? parseInt(page) : 1);
   }
 
+  // ── Nuke all transactions ─────────────────────────────────────────────────────
+
+  @Delete('transactions/all')
+  @UseGuards(RolesGuard)
+  @Roles('super_admin', 'admin', 'developer')
+  deleteAllTransactions() {
+    return this.svc.deleteAllTransactions();
+  }
+
   // ── Transactions ──────────────────────────────────────────────────────────────
 
   @Get('accounts/:id/transactions')

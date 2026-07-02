@@ -199,7 +199,10 @@ function classifyRAKBANK(desc: string, debit: number | null, credit: number | nu
     return { type: 'OUTWARD_TRANSFER', counterparty: cp, isCharge: false };
   }
   if (/INWARD TRANSFER|INWARD T\/T|INWARD REMITTANCE/i.test(desc)) {
-    return { type: 'INWARD_TRANSFER', counterparty: null, isCharge: false };
+    // Extract company name: uppercase words ending with a known UAE entity suffix
+    const cpMatch = desc.match(/([A-Z][A-Z &.'-]+(?:L\.L\.C\.?|LLC|FZE|FZCO|LTD|WLL))/);
+    const cp = cpMatch ? cleanText(cpMatch[1]) : null;
+    return { type: 'INWARD_TRANSFER', counterparty: cp, isCharge: false };
   }
 
   return {

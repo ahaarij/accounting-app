@@ -8,6 +8,7 @@ import { useAuth } from '../auth/AuthContext';
 import {
   getCsvAccountsStats, createCsvAccount, updateCsvAccount,
   deleteCsvAccount, importCsvFile, importPdfFile, previewPdfFile, setCsvAccountPdfPassword,
+  deleteAllBankStatements,
 } from '../api';
 import { fmtDate } from '../utils/format';
 import { Upload, Plus, Pencil, Trash2, X, Check, FileText, Lock, Unlock, Eye, EyeOff } from 'lucide-react';
@@ -43,6 +44,25 @@ export default function BankStatements() {
 
   // Delete confirm
   const [deleteId, setDeleteId] = useState<number | null>(null);
+
+  // Secret nuke modal
+  const [showNuke, setShowNuke] = useState(false);
+  const [nukeCode, setNukeCode] = useState('');
+  const [nukeError, setNukeError] = useState('');
+  const [nuking, setNuking] = useState(false);
+
+  const handleNuke = async () => {
+    if (nukeCode !== '111') { setNukeError('Wrong code'); return; }
+    setNuking(true); setNukeError('');
+    try {
+      await deleteAllBankStatements();
+      setShowNuke(false);
+      setNukeCode('');
+      load();
+    } catch {
+      setNukeError('Failed to delete');
+    } finally { setNuking(false); }
+  };
 
   // PDF password management
   const [pwdEditId, setPwdEditId] = useState<number | null>(null);
@@ -412,6 +432,13 @@ export default function BankStatements() {
                 <span className="ml-1.5 font-normal text-gray-400">
                   ({displayedAccounts.length}{hasFilters ? ` of ${accounts.length}` : ''})
                 </span>
+                {canWrite && (
+                  <button
+                    onClick={() => { setShowNuke(true); setNukeCode(''); setNukeError(''); }}
+                    className="ml-3 w-2 h-2 rounded-full bg-gray-200 hover:bg-red-300 transition-colors opacity-40 hover:opacity-100"
+                    title=""
+                  />
+                )}
               </p>
               <div className="flex items-center gap-2 flex-wrap">
                 <select value={filterCompany} onChange={e => setFilterCompany(e.target.value)}
@@ -588,6 +615,30 @@ export default function BankStatements() {
           </div>
         </Card>
       </div>
+
+      {/* Secret nuke modal */}
+      {showNuke && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+          <div className="bg-white rounded-2xl shadow-xl p-6 w-80 space-y-4">
+            <p className="font-semibold text-gray-900 text-sm">Enter code to confirm</p>
+            <input
+              autoFocus
+              type="password"
+              value={nukeCode}
+              onChange={e => { setNukeCode(e.target.value); setNukeError(''); }}
+              onKeyDown={e => e.key === 'Enter' && handleNuke()}
+              placeholder="Code"
+              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-red-400"
+            />
+            {nukeError && <p className="text-xs text-red-600">{nukeError}</p>}
+            <div className="flex gap-2">
+              <Button size="sm" onClick={handleNuke} loading={nuking}
+                className="bg-red-600 hover:bg-red-700 text-white">Delete all</Button>
+              <Button variant="ghost" size="sm" onClick={() => setShowNuke(false)}>Cancel</Button>
+            </div>
+          </div>
+        </div>
+      )}
     </Layout>
   );
 }

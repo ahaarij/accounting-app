@@ -182,6 +182,18 @@ function parseEIBNarration(narration: string): ParsedNarration {
     return { transaction_type: 'OUTWARD_TRANSFER', counterparty, is_charge: false, description: 'Local transfer', fx_rate: null, fx_original_amount: null, fx_original_currency: null };
   }
 
+  // ── TRANSFER: Bank fees (must check before generic TRANSFER catch-all) ───
+  if (/^TRANSFERBUB\b/i.test(n)) {
+    const period = n.match(/(\d{2}\/\d{4})/)?.[1];
+    const desc = period ? `Relationship fee · ${period}` : 'Relationship fee';
+    return { transaction_type: 'BANK_CHARGE', counterparty: null, is_charge: true, description: desc, fx_rate: null, fx_original_amount: null, fx_original_currency: null };
+  }
+  if (/^TRANSFERMIN\s+BAL\s+FEE\b/i.test(n)) {
+    const period = n.match(/(\d{2}\/\d{4})/)?.[1];
+    const desc = period ? `Minimum balance fee · ${period}` : 'Minimum balance fee';
+    return { transaction_type: 'BANK_CHARGE', counterparty: null, is_charge: true, description: desc, fx_rate: null, fx_original_amount: null, fx_original_currency: null };
+  }
+
   // ── TRANSFER: Internal ───────────────────────────────────────────────────
   const transferMatch = n.match(/TRANSFER.*?TO\s+A\s+C\s+(\d+)/i);
   if (transferMatch) {

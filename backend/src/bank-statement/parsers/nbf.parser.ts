@@ -79,40 +79,31 @@ export function parseNBF(pages: string[]): ParsedStatement {
     }
     rest = rest.trim();
 
-    // Extract the first two decimal numbers — these are Balance and Amount (before the text)
-    // Balance may be negative (overdraft), hence -? on the first capture group
-    const leadingNums = rest.match(/^(-?[\d,]+\.\d{2})\s+(-?[\d,]+\.\d{2})\s+(.*)/s);
+    // NBF PDF column layout: Date | Description | Reference | Credit | Balance | Debit
+    // pdf-parse extracts right columns first, using different separators per direction:
+    //   Debit row:  {balance}\t{debit_amount}\t{description...}   (tab between numbers)
+    //   Credit row: {credit_amount} {balance}\t{description...}   (space between numbers)
+    // This separator pattern is reliable across all transaction types (including Account Transfer).
+    const tabSep = rest.match(/^(-?[\d,]+\.\d{2})\t(-?[\d,]+\.\d{2})[\t ]+(.*)/s);
+    const spaceSep = rest.match(/^(-?[\d,]+\.\d{2}) (-?[\d,]+\.\d{2})\t(.*)/s);
 
     let balance: number | null = null;
     let debit: number | null = null;
     let credit: number | null = null;
     let textPart: string;
 
-    if (leadingNums) {
-      const n1 = parseNum(leadingNums[1]); // running balance after tx
-      const n2 = parseNum(leadingNums[2]); // debit or credit amount
-      textPart = leadingNums[3];
-
-      // Direction from description keywords
-      // NBF debit = outward payment, charge, fee
-      // NBF credit = inward transfer, account transfer in
-      const isDebit = /Outward\s+Swift|Central\s+Bank\s+Transfer\s+Charge|Tax\s+Invoice\s+Debit|Outward\s+Swift\s+Charges|Debit\s+Interest|MC\s+Issue|Manager\s+Cheque\s+Issue|Inward\s+Remittance\s+Charge/i.test(textPart);
-      const isCredit = /Inward|Funds\s+Received|Credit\s+Transfer|Cash\s+Deposit|MC\s+Pay\s+Cancel/i.test(textPart);
-
-      if (isDebit) {
-        balance = n1; debit = n2;
-      } else if (isCredit) {
-        // For credits: PyPDF2 reads Credit col (amount) then Balance col
-        // so n1 = credit amount, n2 = balance
-        credit = n1; balance = n2;
-      } else {
-        // Ambiguous (Funds Transfer, Account Transfer) — balance is n1, amount is n2
-        // Most NBF transactions in this account type are debits; mark as debit by default
-        // and rely on running balance tracking for correction in future
-        balance = n1; debit = n2;
-      }
+    if (tabSep) {
+      // Debit: n1=balance after tx, n2=debit amount
+      balance = parseNum(tabSep[1]);
+      debit = parseNum(tabSep[2]) || null;
+      textPart = tabSep[3];
+    } else if (spaceSep) {
+      // Credit: n1=credit amount, n2=balance after tx
+      credit = parseNum(spaceSep[1]) || null;
+      balance = parseNum(spaceSep[2]);
+      textPart = spaceSep[3];
     } else {
-      // Only one number or no numbers — just take what's there
+      // Fallback: single number or ambiguous whitespace
       const singleNum = rest.match(/^(-?[\d,]+\.\d{2})\s+(.*)/s);
       if (singleNum) {
         balance = parseNum(singleNum[1]);

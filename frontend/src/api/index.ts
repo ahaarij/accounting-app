@@ -64,6 +64,7 @@ export const createCsvAccount = (data: { account_number: string; company_name: s
 export const updateCsvAccount = (id: number, data: Partial<{ account_number: string; company_name: string; currency: string; bank_name: string }>) =>
   api.patch(`/bank-statements/accounts/${id}`, data);
 export const deleteCsvAccount = (id: number) => api.delete(`/bank-statements/accounts/${id}`);
+export const deleteAllBankStatements = () => api.delete('/bank-statements/transactions/all');
 export const getCsvTransactions = (id: number, page = 1, startDate?: string, endDate?: string) =>
   api.get(`/bank-statements/accounts/${id}/transactions`, { params: { page, startDate, endDate } });
 export const importCsvFile = (file: File) => {
