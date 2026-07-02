@@ -12,20 +12,12 @@ import {
 } from '../api';
 import { Eye, EyeOff, RefreshCw, CheckCircle, XCircle, Clock } from 'lucide-react';
 
-const IMPORT_TYPES = [
-  { value: 'group-a', label: 'Group A Balance Sheet' },
-  { value: 'group-b', label: 'Group B Balance Sheet' },
-  { value: 'transactions', label: 'Bank Transactions' },
-  { value: 'cashflow', label: 'Daily Cashflow' },
-];
-
 export default function Settings() {
   const [config, setConfig] = useState({
     email: '',
     app_password: '',
     poll_interval_minutes: 5,
     is_active: false,
-    import_type: 'transactions' as 'group-a' | 'group-b' | 'transactions' | 'cashflow',
     sender_filter: '',
   });
   const [status, setStatus] = useState<{
@@ -54,7 +46,6 @@ export default function Settings() {
           app_password: cfgRes.data.app_password ?? '',
           poll_interval_minutes: cfgRes.data.poll_interval_minutes ?? 5,
           is_active: cfgRes.data.is_active ?? false,
-          import_type: cfgRes.data.import_type ?? 'transactions',
           sender_filter: cfgRes.data.sender_filter ?? '',
         });
       }
@@ -200,31 +191,18 @@ export default function Settings() {
               </div>
             </div>
 
-            <div className="grid grid-cols-2 gap-4">
-              <div>
-                <label className="block text-xs font-medium text-gray-600 mb-1">Import Type</label>
-                <select
-                  value={config.import_type}
-                  onChange={(e) => setConfig((p) => ({ ...p, import_type: e.target.value as any }))}
-                  className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
-                >
-                  {IMPORT_TYPES.map((t) => (
-                    <option key={t.value} value={t.value}>{t.label}</option>
-                  ))}
-                </select>
-              </div>
-              <div>
-                <label className="block text-xs font-medium text-gray-600 mb-1">
-                  Check Every (minutes)
-                </label>
-                <input
-                  type="number"
-                  min={1}
-                  value={config.poll_interval_minutes}
-                  onChange={(e) => setConfig((p) => ({ ...p, poll_interval_minutes: parseInt(e.target.value) || 5 }))}
-                  className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                />
-              </div>
+            <div>
+              <label className="block text-xs font-medium text-gray-600 mb-1">
+                Check Every (minutes)
+              </label>
+              <input
+                type="number"
+                min={1}
+                value={config.poll_interval_minutes}
+                onChange={(e) => setConfig((p) => ({ ...p, poll_interval_minutes: parseInt(e.target.value) || 5 }))}
+                className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+              />
+              <p className="text-xs text-gray-400 mt-1">PDF and CSV bank statement attachments are imported automatically</p>
             </div>
 
             <div>

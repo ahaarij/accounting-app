@@ -3,12 +3,9 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { EmailConfig } from './email-config.entity';
 import { ProcessedEmail } from './processed-email.entity';
-import { ImportService } from '../import/import.service';
 import { BankStatementService } from '../bank-statement/bank-statement.service';
 import { ImapFlow } from 'imapflow';
 import { simpleParser } from 'mailparser';
-import * as os from 'os';
-import * as fs from 'fs';
 import * as path from 'path';
 
 @Injectable()
@@ -24,7 +21,6 @@ export class EmailMonitorService implements OnModuleInit, OnModuleDestroy {
     private configRepo: Repository<EmailConfig>,
     @InjectRepository(ProcessedEmail)
     private processedRepo: Repository<ProcessedEmail>,
-    private importService: ImportService,
     private bankStatementService: BankStatementService,
   ) {}
 
@@ -66,7 +62,6 @@ export class EmailMonitorService implements OnModuleInit, OnModuleDestroy {
     app_password: string;
     poll_interval_minutes?: number;
     is_active?: boolean;
-    import_type?: 'group-a' | 'group-b' | 'transactions' | 'cashflow';
     sender_filter?: string;
   }): Promise<EmailConfig> {
     let config = await this.configRepo.findOne({ where: { id: 1 } });
@@ -211,13 +206,14 @@ export class EmailMonitorService implements OnModuleInit, OnModuleDestroy {
       for (const attachment of attachments) {
         const filename = attachment.filename ?? 'attachment';
         const ext = path.extname(filename).toLowerCase();
-        if (!['.csv', '.xls', '.xlsx', '.pdf'].includes(ext)) {
-          this.logger.log(`  Skipping "${filename}" (unsupported type)`);
+        if (!['.csv', '.pdf'].includes(ext)) {
+          this.logger.log(`  Skipping "${filename}" (unsupported type — only PDF and CSV accepted)`);
           continue;
         }
 
         const logKey = `${uid}-${filename}`;
         let recordsImported = 0;
+        let importType = ext === '.pdf' ? 'pdf' : 'csv';
         let errorMsg: string | null = null;
 
         try {
@@ -226,24 +222,14 @@ export class EmailMonitorService implements OnModuleInit, OnModuleDestroy {
             const result = await this.bankStatementService.importCSV(attachment.content, filename, 'email');
             recordsImported = result.imported;
             this.logger.log(`  Done — ${result.imported} imported, ${result.skipped} skipped`);
-          } else if (ext === '.pdf') {
+          } else {
             this.logger.log(`  Importing "${filename}" → Bank Statements PDF…`);
             const result = await this.bankStatementService.importPDF(attachment.content, filename, undefined, undefined, 'email');
             const totalImported = result.accounts.reduce((s, a) => s + a.imported, 0);
             const totalSkipped  = result.accounts.reduce((s, a) => s + a.skipped, 0);
             recordsImported = totalImported;
+            importType = result.bank ?? 'pdf';
             this.logger.log(`  Done (${result.bank}) — ${totalImported} imported, ${totalSkipped} skipped (${result.pages} pages)`);
-          } else {
-            const tmpPath = path.join(os.tmpdir(), `email-import-${Date.now()}-${filename}`);
-            try {
-              fs.writeFileSync(tmpPath, attachment.content);
-              this.logger.log(`  Importing "${filename}" as ${config.import_type}…`);
-              const result = await this.callImport(config.import_type, tmpPath, filename);
-              recordsImported = result?.records ?? 0;
-              this.logger.log(`  Done — ${recordsImported} records inserted`);
-            } finally {
-              if (fs.existsSync(tmpPath)) fs.unlinkSync(tmpPath);
-            }
           }
           processed++;
         } catch (err: any) {
@@ -260,7 +246,7 @@ export class EmailMonitorService implements OnModuleInit, OnModuleDestroy {
             `INSERT INTO processed_emails (message_id, filename, import_type, records_imported, error)
              VALUES ($1, $2, $3, $4, $5)
              ON CONFLICT (message_id) DO NOTHING`,
-            [logKey, filename, config.import_type, recordsImported, null],
+            [logKey, filename, importType, recordsImported, null],
           );
         }
       }
@@ -300,22 +286,4 @@ export class EmailMonitorService implements OnModuleInit, OnModuleDestroy {
     return { processed, errors };
   }
 
-  private async callImport(
-    importType: string,
-    filePath: string,
-    filename: string,
-  ): Promise<any> {
-    switch (importType) {
-      case 'group-a':
-        return this.importService.importGroupA(filePath, filename);
-      case 'group-b':
-        return this.importService.importGroupB(filePath, filename);
-      case 'transactions':
-        return this.importService.importTransactions(filePath, filename);
-      case 'cashflow':
-        return this.importService.importCashflow(filePath, filename);
-      default:
-        throw new Error(`Unknown import type: ${importType}`);
-    }
-  }
 }

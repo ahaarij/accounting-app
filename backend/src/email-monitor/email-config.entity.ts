@@ -17,13 +17,6 @@ export class EmailConfig {
   @Column({ type: 'boolean', default: false })
   is_active: boolean;
 
-  @Column({
-    type: 'enum',
-    enum: ['group-a', 'group-b', 'transactions', 'cashflow'],
-    default: 'transactions',
-  })
-  import_type: 'group-a' | 'group-b' | 'transactions' | 'cashflow';
-
   @Column({ type: 'varchar', nullable: true })
   sender_filter: string | null;
 
