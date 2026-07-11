@@ -24,10 +24,14 @@ export class RolesAndStatus1000000000008 implements MigrationInterface {
     await queryRunner.query(`UPDATE users SET role = 'admin' WHERE role = 'accountant'`);
     await queryRunner.query(`UPDATE users SET role = 'user'  WHERE role = 'viewer'`);
 
-    // Seed the super admin account on fresh installs only. DO NOTHING (not
-    // DO UPDATE) so a re-run can never reset the password or force the role
-    // back — rotate the password afterwards with `pnpm run reset-superadmin`.
-    const seedPassword = process.env.SUPERADMIN_PASSWORD || 'SuperAdmin123!';
+    // Seed the super admin account on fresh installs only. The password must
+    // be provided explicitly via SUPERADMIN_PASSWORD so it is never hardcoded
+    // in the repo. DO NOTHING (not DO UPDATE) so a re-run can never reset the
+    // password or force the role back.
+    const seedPassword = process.env.SUPERADMIN_PASSWORD;
+    if (!seedPassword) {
+      throw new Error('SUPERADMIN_PASSWORD environment variable is not set — refusing to seed super admin');
+    }
     const hash = await bcrypt.hash(seedPassword, 10);
     await queryRunner.query(
       `INSERT INTO users (name, email, password_hash, role, status)
