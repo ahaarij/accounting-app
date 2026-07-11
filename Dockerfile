@@ -8,7 +8,7 @@ COPY pnpm-workspace.yaml package.json pnpm-lock.yaml ./
 COPY backend/package.json ./backend/
 
 # Install backend dependencies only
-RUN pnpm install --filter backend --frozen-lockfile
+RUN pnpm install --filter backend --no-frozen-lockfile
 
 # Copy backend source and build
 COPY backend ./backend
