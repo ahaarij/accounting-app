@@ -6,11 +6,21 @@ services:
     environment:
       POSTGRES_DB: reconciliation
       POSTGRES_USER: reconciliation
-      POSTGRES_PASSWORD: reconciliation123
+      # Set DB_PASSWORD in the .env file next to this compose file.
+      # Note: this only takes effect on first init of the volume; to change it
+      # later run: docker exec reconciliation-db psql -U reconciliation -c "ALTER USER reconciliation WITH PASSWORD '...'"
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?Set DB_PASSWORD in .env}
     ports:
-      - "5432:5432"
+      # Bound to loopback only — the database must never be reachable from the
+      # network; everything goes through the backend API
+      - "127.0.0.1:5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U reconciliation -d reconciliation"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 volumes:
   postgres_data:

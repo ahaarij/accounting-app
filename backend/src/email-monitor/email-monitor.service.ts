@@ -7,6 +7,7 @@ import { BankStatementService } from '../bank-statement/bank-statement.service';
 import { ImapFlow } from 'imapflow';
 import { simpleParser } from 'mailparser';
 import * as path from 'path';
+import { encryptSecret, decryptSecret } from '../common/crypto.util';
 
 @Injectable()
 export class EmailMonitorService implements OnModuleInit, OnModuleDestroy {
@@ -57,18 +58,32 @@ export class EmailMonitorService implements OnModuleInit, OnModuleDestroy {
     return this.configRepo.findOne({ where: { id: 1 } });
   }
 
+  // For the API: never expose the stored password, only whether one exists
+  async getSafeConfig(): Promise<(Omit<EmailConfig, 'app_password'> & { has_password: boolean }) | null> {
+    const config = await this.getConfig();
+    if (!config) return null;
+    const { app_password, ...rest } = config;
+    return { ...rest, has_password: !!app_password };
+  }
+
   async saveConfig(dto: {
     email: string;
-    app_password: string;
+    app_password?: string;
     poll_interval_minutes?: number;
     is_active?: boolean;
     sender_filter?: string;
-  }): Promise<EmailConfig> {
+  }): Promise<Omit<EmailConfig, 'app_password'> & { has_password: boolean }> {
     let config = await this.configRepo.findOne({ where: { id: 1 } });
     if (!config) {
       config = this.configRepo.create({ id: 1 });
     }
-    Object.assign(config, dto);
+    const { app_password, ...rest } = dto;
+    Object.assign(config, rest);
+    // Blank password means "keep the existing one" — the UI never gets the
+    // stored value back, so it can't round-trip it
+    if (app_password) {
+      config.app_password = encryptSecret(app_password);
+    }
     const saved = await this.configRepo.save(config);
 
     if (saved.is_active) {
@@ -77,7 +92,8 @@ export class EmailMonitorService implements OnModuleInit, OnModuleDestroy {
       this.stopPolling();
     }
 
-    return saved;
+    const { app_password: pw, ...safe } = saved;
+    return { ...safe, has_password: !!pw };
   }
 
   async toggle(): Promise<{ is_active: boolean }> {
@@ -142,6 +158,14 @@ export class EmailMonitorService implements OnModuleInit, OnModuleDestroy {
       this.isPolling = false;
       return { processed: 0, errors: 0 };
     }
+    // A From: filter is mandatory — without it, anyone who learns the inbox
+    // address can mail crafted files straight into the financial records
+    if (!config.sender_filter) {
+      this.logger.error('Email polling skipped: no sender filter configured. Set one in Settings.');
+      this.isPolling = false;
+      return { processed: 0, errors: 1 };
+    }
+    const appPassword = decryptSecret(config.app_password);
 
     this.lastChecked = new Date();
     const intervalMs = config.poll_interval_minutes * 60 * 1000;
@@ -159,7 +183,7 @@ export class EmailMonitorService implements OnModuleInit, OnModuleDestroy {
       host: 'imap.gmail.com',
       port: 993,
       secure: true,
-      auth: { user: config.email, pass: config.app_password },
+      auth: { user: config.email, pass: appPassword },
       logger: false,
       connectionTimeout: 15000,
       greetingTimeout: 10000,
@@ -259,7 +283,7 @@ export class EmailMonitorService implements OnModuleInit, OnModuleDestroy {
         host: 'imap.gmail.com',
         port: 993,
         secure: true,
-        auth: { user: config.email, pass: config.app_password },
+        auth: { user: config.email, pass: appPassword },
         logger: false,
         connectionTimeout: 15000,
         greetingTimeout: 10000,

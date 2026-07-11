@@ -1,0 +1,32 @@
+# Reverse proxy with TLS for local-server hosting.
+# Install Caddy (https://caddyserver.com), then run from this directory:
+#   caddy run --config Caddyfile
+#
+# With a LAN hostname/IP, Caddy issues a locally-trusted certificate
+# ("internal" CA). Install Caddy's root cert on client machines once
+# (it prints instructions on first run), or use a real domain + Let's Encrypt.
+#
+# Replace `recon.local` with your server's hostname or IP.
+
+recon.local {
+	tls internal
+
+	# Backend API
+	handle /auth/* {
+		reverse_proxy 127.0.0.1:3000
+	}
+	handle /uploads/* {
+		reverse_proxy 127.0.0.1:3000
+	}
+	handle /api/* {
+		uri strip_prefix /api
+		reverse_proxy 127.0.0.1:3000
+	}
+
+	# Frontend static build (frontend/dist after `pnpm run build`)
+	handle {
+		root * ../frontend/dist
+		try_files {path} /index.html
+		file_server
+	}
+}

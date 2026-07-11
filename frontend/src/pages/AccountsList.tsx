@@ -2,9 +2,10 @@ import { useEffect, useMemo, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { Layout, PageHeader } from '../components/Layout';
 import { Card } from '../components/ui/card';
-import { Badge } from '../components/ui/badge';
-import { getCsvAccountsStats } from '../api';
+import { getExcelAllAccounts } from '../api';
 import { ArrowLeft, ChevronRight } from 'lucide-react';
+
+const ACTIVE_CUTOFF_DAYS = 45;
 
 function fmt(n: number) {
   return Number(n).toLocaleString('en-AE', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -15,53 +16,57 @@ function fmtDate(d: string | null) {
   return new Date(d).toLocaleDateString('en-AE', { day: '2-digit', month: 'short', year: 'numeric' });
 }
 
+function daysSince(d: string | null): number | null {
+  if (!d) return null;
+  return (Date.now() - new Date(d).getTime()) / (1000 * 60 * 60 * 24);
+}
+
 export default function AccountsList() {
   const { type } = useParams<{ type: 'active' | 'passive' }>();
   const navigate = useNavigate();
   const [accounts, setAccounts] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
 
-  const isActive = type === 'active';
+  const isActivePage = type === 'active';
 
   useEffect(() => {
-    getCsvAccountsStats()
+    getExcelAllAccounts()
       .then(r => setAccounts(r.data))
       .finally(() => setLoading(false));
-  }, []);
-
-  const cutoff = useMemo(() => {
-    const d = new Date();
-    d.setDate(d.getDate() - 90);
-    return d;
   }, []);
 
   const filtered = useMemo(() => {
     return accounts
       .filter(a => {
-        const hasRecentTx = a.latest_date && new Date(a.latest_date) >= cutoff;
-        return isActive ? hasRecentTx : !hasRecentTx;
+        const days = daysSince(a.last_transaction_date);
+        const active = days !== null && days <= ACTIVE_CUTOFF_DAYS;
+        return isActivePage ? active : !active;
       })
       .sort((a, b) => {
-        const da = a.latest_date ? new Date(a.latest_date).getTime() : 0;
-        const db = b.latest_date ? new Date(b.latest_date).getTime() : 0;
-        return db - da;
+        const da = a.last_transaction_date ? new Date(a.last_transaction_date).getTime() : 0;
+        const db = b.last_transaction_date ? new Date(b.last_transaction_date).getTime() : 0;
+        return isActivePage ? db - da : da - db; // active: newest first; passive: oldest first
       });
-  }, [accounts, cutoff, isActive]);
+  }, [accounts, isActivePage]);
 
   const totalAed = useMemo(
-    () => filtered.filter(a => a.currency === 'AED').reduce((s, a) => s + (Number(a.latest_balance) || 0), 0),
+    () => filtered.filter(a => a.currency === 'AED').reduce((s, a) => s + (Number(a.closing_balance) || 0), 0),
     [filtered],
   );
   const totalUsd = useMemo(
-    () => filtered.filter(a => a.currency === 'USD').reduce((s, a) => s + (Number(a.latest_balance) || 0), 0),
+    () => filtered.filter(a => a.currency === 'USD').reduce((s, a) => s + (Number(a.closing_balance) || 0), 0),
     [filtered],
   );
 
   return (
     <Layout>
       <PageHeader
-        title={isActive ? 'Active Accounts' : 'Passive Accounts'}
-        subtitle={isActive ? 'Accounts with a transaction in the last 90 days' : 'Accounts with no transaction in the last 90 days'}
+        title={isActivePage ? 'Active Accounts' : 'Passive Accounts'}
+        subtitle={
+          isActivePage
+            ? `Accounts with a transaction in the last ${ACTIVE_CUTOFF_DAYS} days`
+            : `Accounts with no transaction in the last ${ACTIVE_CUTOFF_DAYS} days`
+        }
         action={
           <button
             onClick={() => navigate('/')}
@@ -73,7 +78,6 @@ export default function AccountsList() {
         }
       />
 
-      {/* Summary strip */}
       <div className="px-8 pt-6 flex gap-6">
         <div className="text-sm text-gray-500">
           <span className="font-semibold text-gray-900 text-base">{filtered.length}</span> accounts
@@ -98,7 +102,7 @@ export default function AccountsList() {
             </div>
           ) : filtered.length === 0 ? (
             <div className="flex items-center justify-center h-48 text-sm text-gray-400">
-              No {isActive ? 'active' : 'passive'} accounts found
+              No {isActivePage ? 'active' : 'passive'} accounts found
             </div>
           ) : (
             <div className="overflow-x-auto">
@@ -110,7 +114,7 @@ export default function AccountsList() {
                     <th className="text-left px-4 py-3 text-xs font-medium text-gray-500 uppercase tracking-wide">CCY</th>
                     <th className="text-left px-4 py-3 text-xs font-medium text-gray-500 uppercase tracking-wide">Last Transaction</th>
                     <th className="text-right px-6 py-3 text-xs font-medium text-gray-500 uppercase tracking-wide">Balance</th>
-                    <th className="text-left px-4 py-3 text-xs font-medium text-gray-500 uppercase tracking-wide">Status</th>
+                    <th className="text-left px-4 py-3 text-xs font-medium text-gray-500 uppercase tracking-wide">Group</th>
                     <th className="w-8" />
                   </tr>
                 </thead>
@@ -118,12 +122,12 @@ export default function AccountsList() {
                   {filtered.map(acc => (
                     <tr
                       key={acc.id}
-                      onClick={() => navigate(`/bank-statements/${acc.id}`)}
+                      onClick={() => navigate(`/excel-balance?accountId=${acc.id}`)}
                       className="hover:bg-gray-50 cursor-pointer transition-colors"
                     >
                       <td className="px-6 py-3">
-                        <p className="font-semibold text-gray-900">{acc.company_name}</p>
-                        <p className="text-xs text-gray-400 font-mono mt-0.5">{acc.account_number}</p>
+                        <p className="font-semibold text-gray-900">{acc.company_name || '—'}</p>
+                        <p className="text-xs text-gray-400 font-mono mt-0.5">{acc.account_code || ''}</p>
                       </td>
                       <td className="px-4 py-3 text-gray-600">{acc.bank_name || '—'}</td>
                       <td className="px-4 py-3">
@@ -131,18 +135,22 @@ export default function AccountsList() {
                           acc.currency === 'AED' ? 'bg-emerald-100 text-emerald-700' :
                           acc.currency === 'USD' ? 'bg-blue-100 text-blue-700' :
                           'bg-purple-100 text-purple-700'
-                        }`}>{acc.currency}</span>
+                        }`}>{acc.currency || '—'}</span>
                       </td>
                       <td className="px-4 py-3 text-gray-500 text-xs">
-                        {fmtDate(acc.latest_date)}
+                        {fmtDate(acc.last_transaction_date)}
                       </td>
                       <td className={`px-6 py-3 text-right font-mono font-semibold ${
-                        !acc.latest_balance || Number(acc.latest_balance) === 0 ? 'text-gray-300' : 'text-gray-800'
+                        !acc.closing_balance || Number(acc.closing_balance) === 0 ? 'text-gray-300' : 'text-gray-800'
                       }`}>
-                        {fmt(Number(acc.latest_balance) || 0)}
+                        {fmt(Number(acc.closing_balance) || 0)}
                       </td>
                       <td className="px-4 py-3">
-                        <Badge label={isActive ? 'active' : 'passive'} variant={isActive ? 'success' : 'warning'} />
+                        <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${
+                          acc.import_group === 'A' ? 'bg-sky-100 text-sky-700' : 'bg-violet-100 text-violet-700'
+                        }`}>
+                          {acc.import_group || '—'}
+                        </span>
                       </td>
                       <td className="pr-4 py-3">
                         <ChevronRight size={14} className="text-gray-300" />

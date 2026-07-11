@@ -5,8 +5,24 @@ export { API_BASE } from './client';
 export const login = (email: string, password: string) =>
   api.post<{ access_token: string }>('/auth/login', { email, password });
 
-export const register = (name: string, email: string, password: string, role: string) =>
-  api.post<{ access_token: string }>('/auth/register', { name, email, password, role });
+export const register = (name: string, email: string, password: string) =>
+  api.post<{ message: string }>('/auth/register', { name, email, password });
+
+export const forgotPassword = (email: string) =>
+  api.post<{ message: string }>('/auth/forgot-password', { email });
+
+export const resetPassword = (token: string, password: string) =>
+  api.post<{ message: string }>('/auth/reset-password', { token, password });
+
+export const sendTestEmail = () =>
+  api.post<{ message: string }>('/auth/test-email');
+
+// App Settings (super_admin)
+export const getAppSettings = () =>
+  api.get<Record<string, string | null>>('/app-settings');
+
+export const saveAppSettings = (settings: Record<string, string>) =>
+  api.put('/app-settings', settings);
 
 // Reconciliation
 export const runReconciliation = (date?: string) =>
@@ -122,7 +138,7 @@ export const importFile = (route: string, file: File) => {
 export const getEmailConfig = () => api.get('/email-monitor/config');
 export const saveEmailConfig = (data: {
   email: string;
-  app_password: string;
+  app_password?: string; // blank = keep the currently saved password
   poll_interval_minutes?: number;
   is_active?: boolean;
   import_type?: string;
@@ -194,3 +210,44 @@ export const addCompanyLink = (companyId: number, dto: { party_id: number; relat
   api.post(`/company-profiles/${companyId}/links`, dto);
 export const removeCompanyLink = (companyId: number, linkId: number) =>
   api.delete(`/company-profiles/${companyId}/links/${linkId}`);
+
+// Excel Balance
+export const importExcelBalance = (file: File, onUploadProgress?: (pct: number) => void) => {
+  const form = new FormData();
+  form.append('file', file);
+  return api.post('/excel-balance/import', form, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+    onUploadProgress: onUploadProgress
+      ? (e) => { if (e.total) onUploadProgress(Math.round((e.loaded / e.total) * 100)); }
+      : undefined,
+  });
+};
+export const getExcelImports = () => api.get('/excel-balance/imports');
+export const getExcelAllAccounts = () => api.get('/excel-balance/all-accounts');
+export const getExcelAccounts = (importId: number) => api.get(`/excel-balance/imports/${importId}/accounts`);
+export const getExcelTransactions = (accountId: number) => api.get(`/excel-balance/accounts/${accountId}/transactions`);
+export const deleteExcelImport = (importId: number) => api.delete(`/excel-balance/imports/${importId}`);
+export const deleteAllExcelData = () => api.delete('/excel-balance/all');
+export const getExcelBalanceTrend = (days = 30) => api.get(`/excel-balance/balance-trend?days=${days}`);
+export const getExcelAccountStats = (from: string, to: string) =>
+  api.get(`/excel-balance/accounts/stats?from=${from}&to=${to}`);
+export const getExcelTransactionsByDate = (date: string) =>
+  api.get(`/excel-balance/transactions/by-date?date=${date}`);
+
+// Suspense review — bank statements only
+export const getSuspenseTransactions = () => api.get('/bank-statements/suspense');
+// Suspense review — Transactions (excel balance) only
+export const getExcelSuspenseTransactions = () => api.get('/excel-balance/suspense');
+export const classifySuspenseTransaction = (
+  source: 'statement' | 'excel',
+  id: number,
+  dto: { transaction_type: string; label?: string; apply_to_similar?: boolean },
+) =>
+  api.patch(
+    source === 'excel'
+      ? `/bank-statements/excel-transactions/${id}/classify`
+      : `/bank-statements/transactions/${id}/classify`,
+    dto,
+  );
+export const getSuspenseRules = () => api.get('/bank-statements/suspense-rules');
+export const deleteSuspenseRule = (id: number) => api.delete(`/bank-statements/suspense-rules/${id}`);

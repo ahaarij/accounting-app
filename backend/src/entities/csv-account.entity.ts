@@ -26,7 +26,9 @@ export class CsvAccount {
   @Column({ type: 'varchar', length: 50, default: 'manual' })
   source: string;
 
-  @Column({ type: 'varchar', length: 500, nullable: true })
+  // Encrypted at rest (AES-256-GCM via crypto.util); select: false keeps it out
+  // of API responses — the UI only sees the has_pdf_password flag
+  @Column({ type: 'varchar', length: 500, nullable: true, select: false })
   pdf_password: string;
 
   @CreateDateColumn()

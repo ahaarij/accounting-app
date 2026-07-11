@@ -4,6 +4,7 @@ import {
 } from '@nestjs/common';
 import { FileInterceptor, FilesInterceptor } from '@nestjs/platform-express';
 import { memoryStorage } from 'multer';
+import { extensionFilter, MB } from '../common/upload.util';
 import { BankStatementService } from './bank-statement.service';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { RolesGuard } from '../auth/roles.guard';
@@ -58,7 +59,11 @@ export class BankStatementController {
   @Post('import')
   @UseGuards(RolesGuard)
   @Roles('super_admin', 'admin', 'developer')
-  @UseInterceptors(FileInterceptor('file', { storage: memoryStorage() }))
+  @UseInterceptors(FileInterceptor('file', {
+    storage: memoryStorage(),
+    limits: { fileSize: 25 * MB },
+    fileFilter: extensionFilter(['.csv']),
+  }))
   importCSV(@UploadedFile() file: Express.Multer.File) {
     if (!file) throw new BadRequestException('No file uploaded');
     return this.svc.importCSV(file.buffer, file.originalname);
@@ -69,7 +74,11 @@ export class BankStatementController {
   @Post('import-pdf')
   @UseGuards(RolesGuard)
   @Roles('super_admin', 'admin', 'developer')
-  @UseInterceptors(FilesInterceptor('files', 20, { storage: memoryStorage() }))
+  @UseInterceptors(FilesInterceptor('files', 20, {
+    storage: memoryStorage(),
+    limits: { fileSize: 25 * MB },
+    fileFilter: extensionFilter(['.pdf']),
+  }))
   async importPDF(
     @UploadedFiles() files: Express.Multer.File[],
     @Body('password') password?: string,
@@ -93,7 +102,11 @@ export class BankStatementController {
   @Post('preview-pdf')
   @UseGuards(RolesGuard)
   @Roles('super_admin', 'admin', 'developer')
-  @UseInterceptors(FileInterceptor('file', { storage: memoryStorage() }))
+  @UseInterceptors(FileInterceptor('file', {
+    storage: memoryStorage(),
+    limits: { fileSize: 25 * MB },
+    fileFilter: extensionFilter(['.pdf']),
+  }))
   previewPDF(
     @UploadedFile() file: Express.Multer.File,
     @Body('password') password?: string,
@@ -139,11 +152,50 @@ export class BankStatementController {
     return this.svc.getBalanceTrend(days ? parseInt(days) : 30);
   }
 
+  // ── Suspense review ───────────────────────────────────────────────────────────
+
+  @Get('suspense')
+  getSuspenseTransactions() {
+    return this.svc.getSuspenseTransactions();
+  }
+
+  @Patch('transactions/:id/classify')
+  @UseGuards(RolesGuard)
+  @Roles('super_admin', 'admin', 'developer')
+  classifyTransaction(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: { transaction_type: string; label?: string; apply_to_similar?: boolean },
+  ) {
+    return this.svc.classifySuspense('statement', id, dto);
+  }
+
+  @Patch('excel-transactions/:id/classify')
+  @UseGuards(RolesGuard)
+  @Roles('super_admin', 'admin', 'developer')
+  classifyExcelTransaction(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: { transaction_type: string; label?: string; apply_to_similar?: boolean },
+  ) {
+    return this.svc.classifySuspense('excel', id, dto);
+  }
+
+  @Get('suspense-rules')
+  getSuspenseRules() {
+    return this.svc.getSuspenseRules();
+  }
+
+  @Delete('suspense-rules/:id')
+  @UseGuards(RolesGuard)
+  @Roles('super_admin', 'admin', 'developer')
+  deleteSuspenseRule(@Param('id', ParseIntPipe) id: number) {
+    return this.svc.deleteSuspenseRule(id);
+  }
+
   // ── Nuke all transactions ─────────────────────────────────────────────────────
 
   @Delete('transactions/all')
   @UseGuards(RolesGuard)
-  @Roles('super_admin', 'admin', 'developer')
+  @Roles('super_admin', 'admin')
   deleteAllTransactions() {
     return this.svc.deleteAllTransactions();
   }

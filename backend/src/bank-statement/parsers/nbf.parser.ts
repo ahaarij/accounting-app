@@ -185,5 +185,5 @@ function classifyNBF(description: string): { transaction_type: string; is_charge
   if (/Inward\s+Remittance\s+Charge/i.test(description)) return { transaction_type: 'BANK_CHARGE', is_charge: true };
   if (/MC\s+Pay\s+Cancel|Cheque\s+Return/i.test(description)) return { transaction_type: 'INWARD_TRANSFER', is_charge: false };
   if (/Inward|Funds\s+Received/i.test(description)) return { transaction_type: 'INWARD_TRANSFER', is_charge: false };
-  return { transaction_type: 'OTHER', is_charge: false };
+  return { transaction_type: 'SUSPENSE', is_charge: false };
 }

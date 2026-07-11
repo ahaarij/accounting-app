@@ -190,7 +190,7 @@ function parseADIBNarration(narration: string): ParsedNarration {
 
   // ── FX cash rewards ──────────────────────────────────────────────────────
   if (/FX CASH REWARDS/i.test(n)) {
-    return mk('OTHER', null, false, 'FX cash rewards');
+    return mk('SUSPENSE', null, false, 'FX cash rewards');
   }
 
   // ── Internal transfer (IB-INTT) ──────────────────────────────────────────
@@ -265,7 +265,7 @@ function parseADIBNarration(narration: string): ParsedNarration {
     return mk('INWARD_TRANSFER', null, false, 'Inward transfer');
   }
 
-  return mk('OTHER', null, false, null);
+  return mk('SUSPENSE', null, false, null);
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────────

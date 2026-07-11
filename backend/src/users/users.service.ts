@@ -1,6 +1,6 @@
 import { Injectable, NotFoundException, ForbiddenException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { Repository, Not } from 'typeorm';
 import { User, UserRole } from '../entities/user.entity';
 
 @Injectable()
@@ -8,11 +8,14 @@ export class UsersService {
   constructor(@InjectRepository(User) private readonly userRepo: Repository<User>) {}
 
   findAll() {
-    return this.userRepo.find({ where: [{ status: 'active' }, { status: 'rejected' }], order: { createdAt: 'ASC' } });
+    return this.userRepo.find({
+      where: [{ status: 'active', role: Not('super_admin') }, { status: 'rejected', role: Not('super_admin') }],
+      order: { createdAt: 'ASC' },
+    });
   }
 
   findPending() {
-    return this.userRepo.find({ where: { status: 'pending' }, order: { createdAt: 'ASC' } });
+    return this.userRepo.find({ where: { status: 'pending', role: Not('super_admin') }, order: { createdAt: 'ASC' } });
   }
 
   async approveUser(id: number) {

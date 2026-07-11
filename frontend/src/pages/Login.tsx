@@ -60,10 +60,13 @@ export default function Login() {
             {loading ? 'Signing in…' : 'Sign in'}
           </button>
 
-          <p className="text-center text-xs text-gray-500">
-            Don't have an account?{' '}
-            <Link to="/register" className="text-blue-600 hover:underline">Request access</Link>
-          </p>
+          <div className="flex items-center justify-between text-xs text-gray-500">
+            <span>
+              Don't have an account?{' '}
+              <Link to="/register" className="text-blue-600 hover:underline">Request access</Link>
+            </span>
+            <Link to="/forgot-password" className="text-blue-600 hover:underline">Forgot password?</Link>
+          </div>
         </form>
       </div>
     </div>

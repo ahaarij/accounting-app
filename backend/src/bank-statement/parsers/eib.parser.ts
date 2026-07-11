@@ -81,7 +81,7 @@ export function parseEIB(pages: string[]): ParsedStatement {
         const reparsed = parseEIBNarration(combinedNarration);
         prev.narration = reparsed.description ?? combinedNarration;
         if (reparsed.counterparty && !prev.counterparty) prev.counterparty = reparsed.counterparty;
-        if (reparsed.transaction_type !== 'OTHER') prev.transaction_type = reparsed.transaction_type;
+        if (reparsed.transaction_type !== 'SUSPENSE') prev.transaction_type = reparsed.transaction_type;
       }
       continue;
     }
@@ -257,7 +257,7 @@ function parseEIBNarration(narration: string): ParsedNarration {
     return { transaction_type: 'BANK_CHARGE', counterparty: null, is_charge: true, description: 'Bank charge', fx_rate: null, fx_original_amount: null, fx_original_currency: null };
   }
 
-  return { transaction_type: 'OTHER', counterparty: null, is_charge: false, description: null, fx_rate: null, fx_original_amount: null, fx_original_currency: null };
+  return { transaction_type: 'SUSPENSE', counterparty: null, is_charge: false, description: null, fx_rate: null, fx_original_amount: null, fx_original_currency: null };
 }
 
 // ── Shared helpers ────────────────────────────────────────────────────────────

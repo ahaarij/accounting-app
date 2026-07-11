@@ -2,5 +2,11 @@
   "name": "reconciliation-app",
   "private": true,
   "version": "1.0.0",
-  "workspaces": ["electron", "frontend", "backend"]
+  "workspaces": ["electron", "frontend", "backend"],
+  "pnpm": {
+    "overrides": {
+      "multer": "^2.2.0",
+      "lodash": "^4.18.0"
+    }
+  }
 }

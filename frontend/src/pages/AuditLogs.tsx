@@ -17,6 +17,7 @@ interface AuditLog {
 const ENTITY_TYPES = [
   { value: '', label: 'All' },
   { value: 'import', label: 'Import' },
+  { value: 'excel_balance', label: 'Excel Balance' },
   { value: 'reconciliation', label: 'Reconciliation' },
   { value: 'cash_deposit', label: 'Cash Deposits' },
   { value: 'company_profile', label: 'Company Profiles' },

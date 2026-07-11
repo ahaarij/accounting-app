@@ -5,6 +5,7 @@ import { BankAccount } from '../entities/bank-account.entity';
 import { AccountTransaction } from '../entities/account-transaction.entity';
 import { DailyTransaction } from '../entities/daily-transaction.entity';
 import { CounterpartyLedger } from '../entities/counterparty-ledger.entity';
+import { escapeLike } from '../common/sql.util';
 
 @Injectable()
 export class BankAccountsService {
@@ -165,7 +166,7 @@ export class BankAccountsService {
     page = 1,
     limit = 200,
   ) {
-    const pattern = `%${search}%`;
+    const pattern = `%${escapeLike(search)}%`;
     const params: any[] = [pattern, currency ?? null, startDate ?? null, endDate ?? null];
 
     const where = `

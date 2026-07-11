@@ -7,6 +7,7 @@ import { Roles } from '../auth/roles.decorator';
 import { diskStorage } from 'multer';
 import * as path from 'path';
 import * as fs from 'fs';
+import { extensionFilter, MB } from '../common/upload.util';
 
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Controller('sales')
@@ -17,13 +18,17 @@ export class SalesController {
   @Roles('super_admin', 'admin', 'developer')
   @UseInterceptors(FileInterceptor('file', {
     storage: diskStorage({
+      // tmp-imports is NOT served by the static /uploads route
       destination: (req, file, cb) => {
-        const dir = path.join(process.cwd(), 'uploads');
+        const dir = path.join(process.cwd(), 'tmp-imports');
         if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
         cb(null, dir);
       },
-      filename: (req, file, cb) => cb(null, `${Date.now()}-${file.originalname}`),
+      filename: (req, file, cb) =>
+        cb(null, `${Date.now()}-${path.basename(file.originalname).replace(/[^\w.\- ]/g, '_')}`),
     }),
+    limits: { fileSize: 100 * MB },
+    fileFilter: extensionFilter(['.xlsx', '.xls', '.csv']),
   }))
   async importSalesRegister(@UploadedFile() file: Express.Multer.File) {
     if (!file) throw new BadRequestException('No file uploaded');

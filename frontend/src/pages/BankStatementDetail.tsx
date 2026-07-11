@@ -6,6 +6,7 @@ import { Button } from '../components/ui/button';
 import { getCsvTransactions } from '../api';
 import { fmtDate } from '../utils/format';
 import { ArrowLeft, Search, ChevronDown, ChevronRight } from 'lucide-react';
+import ClassifySuspenseModal, { ClassifyTarget } from '../components/ClassifySuspenseModal';
 
 function fmtNum(v: any) {
   if (v == null || v === '') return '—';
@@ -38,6 +39,7 @@ const TYPE_COLORS: Record<string, string> = {
   MONTHLY_CHARGE:       'bg-orange-100 text-orange-700',
   CHEQUE_PAID:          'bg-slate-100 text-slate-600',
   RETURNED_CHEQUE:      'bg-slate-100 text-slate-600',
+  SUSPENSE:             'bg-yellow-100 text-yellow-700',
   OTHER:                'bg-gray-100 text-gray-500',
 };
 
@@ -53,6 +55,7 @@ const TYPE_LABELS: Record<string, string> = {
   MONTHLY_CHARGE:       'Monthly Fee',
   CHEQUE_PAID:          'Cheque',
   RETURNED_CHEQUE:      'Returned',
+  SUSPENSE:             'Suspense',
   OTHER:                'Other',
 };
 
@@ -95,9 +98,16 @@ function ChargeRow({ charge }: { charge: any }) {
   );
 }
 
-function TxRow({ tx }: { tx: any }) {
+const CHARGE_TYPE_SET = new Set(['BANK_CHARGE', 'VAT_CHARGE', 'MONTHLY_CHARGE']);
+
+function isSuspenseTx(tx: any) {
+  return !tx.counterparty && !tx.custom_label && !tx.is_charge && !CHARGE_TYPE_SET.has(tx.transaction_type);
+}
+
+function TxRow({ tx, onClassify }: { tx: any; onClassify?: (tx: any) => void }) {
   const [expanded, setExpanded] = useState(false);
   const hasCharges = tx.charges && tx.charges.length > 0;
+  const suspense = isSuspenseTx(tx);
 
   return (
     <>
@@ -115,11 +125,23 @@ function TxRow({ tx }: { tx: any }) {
           <div className="flex flex-col gap-1 min-w-0">
             <div className="flex items-center gap-1.5 flex-wrap">
               {tx.bank_detected && <BankBadge bank={tx.bank_detected} />}
-              {tx.transaction_type && <TypeBadge type={tx.transaction_type} />}
+              {tx.transaction_type && (
+                suspense && onClassify ? (
+                  <button
+                    onClick={(e) => { e.stopPropagation(); onClassify(tx); }}
+                    title="Unclassified — click to name and categorise"
+                    className="cursor-pointer hover:ring-2 hover:ring-yellow-300 rounded transition-shadow"
+                  >
+                    <TypeBadge type="SUSPENSE" />
+                  </button>
+                ) : (
+                  <TypeBadge type={suspense ? 'SUSPENSE' : tx.transaction_type} />
+                )
+              )}
             </div>
-            {tx.counterparty && (
-              <span className="font-semibold text-gray-900 text-sm leading-tight truncate max-w-sm" title={tx.counterparty}>
-                {tx.counterparty}
+            {(tx.custom_label || tx.counterparty) && (
+              <span className="font-semibold text-gray-900 text-sm leading-tight truncate max-w-sm" title={tx.custom_label || tx.counterparty}>
+                {tx.custom_label || tx.counterparty}
               </span>
             )}
             {tx.description && (
@@ -178,6 +200,7 @@ export default function BankStatementDetail() {
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(false);
   const [search, setSearch] = useState('');
+  const [classifyTx, setClassifyTx] = useState<ClassifyTarget | null>(null);
 
   const load = async (p = 1) => {
     if (!id) return;
@@ -202,8 +225,7 @@ export default function BankStatementDetail() {
       )
     : transactions;
 
-  const totalDebits = transactions.reduce((s, t) => s + Number(t.debit ?? 0), 0);
-  const totalCredits = transactions.reduce((s, t) => s + Number(t.credit ?? 0), 0);
+  const suspenseCount = transactions.filter(isSuspenseTx).length;
   const latestBalance = transactions.length > 0 ? Number(transactions[0].balance ?? 0) : null;
 
   return (
@@ -223,18 +245,19 @@ export default function BankStatementDetail() {
       <div className="p-8 space-y-6">
 
         {/* Summary cards */}
-        <div className="grid grid-cols-4 gap-4">
-          {[
-            { label: 'Total transactions', value: total.toLocaleString() },
-            { label: 'Total credits', value: fmtNum(totalCredits.toFixed(2)) },
-            { label: 'Total debits', value: fmtNum(totalDebits.toFixed(2)) },
-            { label: 'Latest balance', value: latestBalance != null ? fmtNum(latestBalance.toFixed(2)) : '—' },
-          ].map(({ label, value }) => (
-            <div key={label} className="rounded-xl border border-gray-200 bg-white px-6 py-4">
-              <p className="text-2xl font-bold text-gray-900 font-mono">{value}</p>
-              <p className="text-xs text-gray-500 mt-0.5">{label}</p>
-            </div>
-          ))}
+        <div className="grid grid-cols-3 gap-4">
+          <div className="rounded-xl border border-gray-200 bg-white px-6 py-4">
+            <p className="text-2xl font-bold text-gray-900 font-mono">{total.toLocaleString()}</p>
+            <p className="text-xs text-gray-500 mt-0.5">Total transactions</p>
+          </div>
+          <div className={`rounded-xl border px-6 py-4 ${suspenseCount > 0 ? 'border-yellow-300 bg-yellow-50' : 'border-gray-200 bg-white'}`}>
+            <p className={`text-2xl font-bold font-mono ${suspenseCount > 0 ? 'text-yellow-700' : 'text-gray-900'}`}>{suspenseCount.toLocaleString()}</p>
+            <p className={`text-xs mt-0.5 ${suspenseCount > 0 ? 'text-yellow-600' : 'text-gray-500'}`}>Suspense transactions</p>
+          </div>
+          <div className="rounded-xl border border-gray-200 bg-white px-6 py-4">
+            <p className="text-2xl font-bold text-gray-900 font-mono">{latestBalance != null ? fmtNum(latestBalance.toFixed(2)) : '—'}</p>
+            <p className="text-xs text-gray-500 mt-0.5">Latest balance</p>
+          </div>
         </div>
 
         <Card>
@@ -281,7 +304,13 @@ export default function BankStatementDetail() {
                 {loading && (
                   <tr><td colSpan={6} className="px-6 py-8 text-center text-gray-400 text-sm">Loading…</td></tr>
                 )}
-                {!loading && displayed.map((t: any) => <TxRow key={t.id} tx={t} />)}
+                {!loading && displayed.map((t: any) => (
+                  <TxRow key={t.id} tx={t}
+                    onClassify={(tx) => setClassifyTx({
+                      id: tx.id, source: 'statement',
+                      description: tx.description, date: tx.date, debit: tx.debit, credit: tx.credit,
+                    })} />
+                ))}
                 {!loading && page === pages && !search && transactions.length > 0 && (() => {
                   const earliest = transactions[transactions.length - 1];
                   const openingBal = Number(earliest.balance ?? 0)
@@ -320,6 +349,14 @@ export default function BankStatementDetail() {
           )}
         </Card>
       </div>
+
+      {classifyTx && (
+        <ClassifySuspenseModal
+          tx={classifyTx}
+          onClose={() => setClassifyTx(null)}
+          onSaved={() => { setClassifyTx(null); load(page); }}
+        />
+      )}
     </Layout>
   );
 }

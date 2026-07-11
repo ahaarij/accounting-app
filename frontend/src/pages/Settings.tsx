@@ -27,6 +27,7 @@ export default function Settings() {
     recentCount: number;
   } | null>(null);
   const [recentImports, setRecentImports] = useState<any[]>([]);
+  const [hasSavedPassword, setHasSavedPassword] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
   const [saving, setSaving] = useState(false);
   const [testing, setTesting] = useState(false);
@@ -43,11 +44,14 @@ export default function Settings() {
       if (cfgRes.data) {
         setConfig({
           email: cfgRes.data.email ?? '',
-          app_password: cfgRes.data.app_password ?? '',
+          // The backend never returns the stored password; leaving this blank
+          // on save keeps the existing one
+          app_password: '',
           poll_interval_minutes: cfgRes.data.poll_interval_minutes ?? 5,
           is_active: cfgRes.data.is_active ?? false,
           sender_filter: cfgRes.data.sender_filter ?? '',
         });
+        setHasSavedPassword(!!cfgRes.data.has_password);
       }
       setStatus(statusRes.data);
       setRecentImports(recentRes.data);
@@ -174,7 +178,7 @@ export default function Settings() {
                     type={showPassword ? 'text' : 'password'}
                     value={config.app_password}
                     onChange={(e) => setConfig((p) => ({ ...p, app_password: e.target.value }))}
-                    placeholder="xxxx xxxx xxxx xxxx"
+                    placeholder={hasSavedPassword ? '•••••••• (saved — leave blank to keep)' : 'xxxx xxxx xxxx xxxx'}
                     className="w-full px-3 py-2 pr-9 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
                   />
                   <button

@@ -1,4 +1,5 @@
 import { Fragment, useState, useEffect, useMemo, useRef } from 'react';
+import { MonthPicker, currentMonthStr, fmtMonth } from '../components/MonthPicker';
 import { Layout } from '../components/Layout';
 import {
   ChevronDown, ChevronRight, ChevronUp,
@@ -194,17 +195,6 @@ function fmtDate(dateStr: string | null): string {
   return `${parseInt(d)} ${months[parseInt(m) - 1]} ${y}`;
 }
 
-function fmtMonth(ym: string): string {
-  if (!ym) return '';
-  const [y, m] = ym.split('-');
-  const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-  return `${months[parseInt(m) - 1]} ${y}`;
-}
-
-function currentMonthStr(): string {
-  const d = new Date();
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
-}
 
 function todayStr(): string {
   const now = new Date();
@@ -297,78 +287,6 @@ function buildDepositPlan(total: number, groups: CompanyGroup[]): { allocations:
   }
 
   return { allocations, leftover: remaining > 0.01 ? remaining : 0 };
-}
-
-// ── Month picker (same as Dashboard deposit graph) ────────────────────────────
-
-const MONTH_NAMES = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-
-function MonthPicker({ value, onChange }: { value: string; onChange: (v: string) => void }) {
-  const [open, setOpen] = useState(false);
-  const ref = useRef<HTMLDivElement>(null);
-  const now = new Date();
-  const [year, setYear] = useState(() => parseInt(value.split('-')[0]));
-  const selMonth = parseInt(value.split('-')[1]) - 1;
-  const selYear  = parseInt(value.split('-')[0]);
-
-  useEffect(() => {
-    function onClick(e: MouseEvent) {
-      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
-    }
-    document.addEventListener('mousedown', onClick);
-    return () => document.removeEventListener('mousedown', onClick);
-  }, []);
-
-  function select(m: number) {
-    onChange(`${year}-${String(m + 1).padStart(2, '0')}`);
-    setOpen(false);
-  }
-
-  function isFuture(m: number) {
-    return year > now.getFullYear() || (year === now.getFullYear() && m > now.getMonth());
-  }
-
-  return (
-    <div className="relative" ref={ref}>
-      <button onClick={() => setOpen(o => !o)}
-        className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium border border-gray-200 rounded-lg text-gray-700 bg-white hover:bg-gray-50 transition-colors">
-        {MONTH_NAMES[selMonth]} {selYear}
-        <svg width="10" height="10" viewBox="0 0 10 10" fill="none" className="text-gray-400">
-          <path d="M2 3.5L5 6.5L8 3.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
-        </svg>
-      </button>
-      {open && (
-        <div className="absolute left-0 top-9 z-50 bg-white border border-gray-200 rounded-xl shadow-lg p-3 w-52">
-          <div className="flex items-center justify-between mb-2.5">
-            <button onClick={() => setYear(y => y - 1)} className="p-1 rounded hover:bg-gray-100 text-gray-500">
-              <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M9 11L5 7L9 3" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg>
-            </button>
-            <span className="text-xs font-semibold text-gray-800">{year}</span>
-            <button onClick={() => setYear(y => y + 1)} disabled={year >= now.getFullYear()}
-              className="p-1 rounded hover:bg-gray-100 text-gray-500 disabled:opacity-30">
-              <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M5 3L9 7L5 11" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg>
-            </button>
-          </div>
-          <div className="grid grid-cols-3 gap-1">
-            {MONTH_NAMES.map((name, m) => {
-              const isSelected = m === selMonth && year === selYear;
-              const disabled   = isFuture(m);
-              return (
-                <button key={m} onClick={() => !disabled && select(m)} disabled={disabled}
-                  className={`px-2 py-1.5 text-xs rounded-lg font-medium transition-colors ${
-                    isSelected ? 'bg-blue-600 text-white' :
-                    disabled   ? 'text-gray-300 cursor-default' :
-                                 'text-gray-600 hover:bg-gray-100'
-                  }`}>
-                  {name}
-                </button>
-              );
-            })}
-          </div>
-        </div>
-      )}
-    </div>
-  );
 }
 
 // ── Shared input/button styles ─────────────────────────────────────────────────
@@ -519,6 +437,11 @@ function DepositPlannerModal({ groups, onClose, onDepositsAdded }: {
   const [addingAll, setAddingAll] = useState(false);
   const [descError, setDescError] = useState(false);
 
+  // Per-row amount overrides (index → edited value)
+  const [overrides, setOverrides] = useState<Record<number, number>>({});
+  const [editingIdx, setEditingIdx] = useState<number | null>(null);
+  const [editingValue, setEditingValue] = useState('');
+
   function calculate() {
     const n = parseFloat(amount.replace(/,/g, ''));
     if (!n || n <= 0) return;
@@ -526,9 +449,109 @@ function DepositPlannerModal({ groups, onClose, onDepositsAdded }: {
     setPlan(result.allocations);
     setLeftover(result.leftover);
     setAdded(new Set());
+    setOverrides({});
+    setEditingIdx(null);
+    setSuggestionAdded(false);
   }
 
-  async function addOne(i: number, alloc: PlanAllocation) {
+  // Plan with user overrides applied; each item carries idx + available_capacity
+  const effectivePlan = useMemo(() => {
+    if (!plan) return null;
+    return plan.map((a, i) => {
+      const eff = overrides[i] ?? a.amount;
+      const availCap = parseFloat((a.remaining_after + a.amount).toFixed(2));
+      return {
+        ...a,
+        idx: i,
+        amount: eff,
+        remaining_after: parseFloat((availCap - eff).toFixed(2)),
+        available_capacity: availCap,
+      };
+    });
+  }, [plan, overrides]);
+
+  const totalNum = parseFloat(amount.replace(/,/g, '')) || 0;
+  const allocatedTotal = effectivePlan
+    ? parseFloat(effectivePlan.reduce((s, a) => s + a.amount, 0).toFixed(2))
+    : 0;
+  // Amount freed by edits (original leftover already can't be placed anywhere)
+  const unallocated = effectivePlan
+    ? parseFloat((totalNum - leftover - allocatedTotal).toFixed(2))
+    : 0;
+
+  // Single best company NOT already in the plan that can absorb some of the unallocated amount.
+  // Uses the same account-picking logic as buildDepositPlan (oldest last-tx first).
+  const suggestion = useMemo(() => {
+    if (!effectivePlan || unallocated <= 0.01) return null;
+    const plannedIds = new Set(effectivePlan.map((a) => a.company_id));
+
+    function accountLastTx(row: CompanyRow): string | null {
+      if (row.deposits.length === 0) return null;
+      return row.deposits.reduce((l, d) => (d.date > l ? d.date : l), row.deposits[0].date);
+    }
+
+    const candidate = [...groups]
+      .filter((g) => !plannedIds.has(g.company_id) && (g.monthly_limit - g.total_deposits) > 0.01)
+      .sort((a, b) => {
+        const aO = CAT_ORDER[a.category ?? ''] ?? 3;
+        const bO = CAT_ORDER[b.category ?? ''] ?? 3;
+        if (aO !== bO) return aO - bO;
+        return (b.monthly_limit - b.total_deposits) - (a.monthly_limit - a.total_deposits);
+      })[0];
+
+    if (!candidate) return null;
+
+    const account = [...candidate.accounts].sort((a, b) => {
+      const aDate = accountLastTx(a);
+      const bDate = accountLastTx(b);
+      if (!aDate && !bDate) return 0;
+      if (!aDate) return -1;
+      if (!bDate) return 1;
+      return aDate.localeCompare(bDate);
+    })[0];
+
+    const available = parseFloat((candidate.monthly_limit - candidate.total_deposits).toFixed(2));
+    const addable = parseFloat(Math.min(available, candidate.per_tx_limit, unallocated).toFixed(2));
+    if (addable <= 0.01) return null;
+
+    return {
+      company_id: candidate.company_id,
+      company_name: candidate.company_name,
+      category: candidate.category,
+      bank_account: account?.bank_account ?? '',
+      addable,
+    };
+  }, [effectivePlan, unallocated, groups]);
+
+  const [suggestionAdded, setSuggestionAdded] = useState(false);
+  const [suggestionSaving, setSuggestionSaving] = useState(false);
+
+  async function addSuggestion() {
+    if (!suggestion) return;
+    if (!description.trim()) { setDescError(true); return; }
+    setDescError(false);
+    setSuggestionSaving(true);
+    try {
+      await createCashDeposit({ company_id: suggestion.company_id, bank_account: suggestion.bank_account, date: todayStr(), description: description.trim(), amount: suggestion.addable });
+      setSuggestionAdded(true);
+      onDepositsAdded();
+    } finally { setSuggestionSaving(false); }
+  }
+
+  function commitEdit(i: number) {
+    const val = parseFloat(editingValue);
+    if (!isNaN(val) && val > 0 && effectivePlan) {
+      const maxCap = effectivePlan[i].available_capacity;
+      const clamped = parseFloat(Math.min(Math.max(val, 1), maxCap).toFixed(2));
+      setOverrides((prev) => ({ ...prev, [i]: clamped }));
+    }
+    setEditingIdx(null);
+    setEditingValue('');
+  }
+
+  async function addOne(i: number) {
+    if (!effectivePlan) return;
+    const alloc = effectivePlan[i];
     if (!description.trim()) { setDescError(true); return; }
     setDescError(false);
     setSaving((prev) => new Set(prev).add(i));
@@ -542,23 +565,32 @@ function DepositPlannerModal({ groups, onClose, onDepositsAdded }: {
   }
 
   async function addAll() {
-    if (!plan) return;
+    if (!effectivePlan) return;
     if (!description.trim()) { setDescError(true); return; }
     setDescError(false);
     setAddingAll(true);
     try {
-      for (let i = 0; i < plan.length; i++) {
+      for (let i = 0; i < effectivePlan.length; i++) {
         if (added.has(i)) continue;
-        await createCashDeposit({ company_id: plan[i].company_id, bank_account: plan[i].bank_account, date: todayStr(), description: description.trim(), amount: plan[i].amount });
+        await createCashDeposit({ company_id: effectivePlan[i].company_id, bank_account: effectivePlan[i].bank_account, date: todayStr(), description: description.trim(), amount: effectivePlan[i].amount });
         setAdded((prev) => new Set(prev).add(i));
+        onDepositsAdded();
+      }
+      // Also add the suggested leftover deposit if it exists and hasn't been added yet
+      if (suggestion && !suggestionAdded) {
+        await createCashDeposit({ company_id: suggestion.company_id, bank_account: suggestion.bank_account, date: todayStr(), description: description.trim(), amount: suggestion.addable });
+        setSuggestionAdded(true);
         onDepositsAdded();
       }
     } finally { setAddingAll(false); }
   }
 
-  const allocatedTotal = plan ? plan.reduce((s, a) => s + a.amount, 0) : 0;
-  const uniqueCompanies = plan ? new Set(plan.map((a) => a.company_id)).size : 0;
-  const allAdded = plan !== null && plan.length > 0 && added.size === plan.length;
+  const uniqueCompanies = effectivePlan ? new Set(effectivePlan.map((a) => a.company_id)).size : 0;
+  // All plan rows done AND suggestion done (if one exists)
+  const allAdded = effectivePlan !== null && effectivePlan.length > 0
+    && added.size === effectivePlan.length
+    && (!suggestion || suggestionAdded);
+  const hasSuggestionPending = suggestion && !suggestionAdded;
 
   return (
     <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50">
@@ -572,13 +604,13 @@ function DepositPlannerModal({ groups, onClose, onDepositsAdded }: {
             <div className="flex-1">
               <label className={labelCls}>Total Amount to Deposit (AED)</label>
               <input type="number" value={amount}
-                onChange={(e) => { setAmount(e.target.value); setPlan(null); setAdded(new Set()); }}
+                onChange={(e) => { setAmount(e.target.value); setPlan(null); setAdded(new Set()); setOverrides({}); }}
                 onKeyDown={(e) => e.key === 'Enter' && calculate()}
                 placeholder="e.g. 2000000" min="1" autoFocus className={cn(inputCls, 'font-mono')} />
             </div>
             <button onClick={calculate} className={btnPrimary}>Find Split</button>
           </div>
-          {plan && plan.length > 0 && (
+          {effectivePlan && effectivePlan.length > 0 && (
             <div>
               <label className={labelCls}>Description <span className="normal-case font-normal text-gray-400">(required for all)</span></label>
               <input type="text" value={description}
@@ -595,58 +627,134 @@ function DepositPlannerModal({ groups, onClose, onDepositsAdded }: {
               <Calculator size={28} className="text-gray-200 mx-auto mb-3" />
               <p className="text-sm text-gray-400">Enter an amount and click Find Split</p>
             </div>
-          ) : plan.length === 0 ? (
+          ) : effectivePlan!.length === 0 ? (
             <div className="py-20 text-center text-sm text-gray-400">No accounts have remaining capacity this month</div>
           ) : (
-            <table className="w-full text-sm">
-              <thead className="border-b border-gray-100 sticky top-0 bg-white">
-                <tr>
-                  <th className="px-5 py-3 text-left text-xs font-semibold text-gray-400 uppercase tracking-wider w-8">#</th>
-                  <th className="px-3 py-3 text-left text-xs font-semibold text-gray-400 uppercase tracking-wider w-12">Cat</th>
-                  <th className="px-3 py-3 text-left text-xs font-semibold text-gray-400 uppercase tracking-wider">Company</th>
-                  <th className="px-3 py-3 text-left text-xs font-semibold text-gray-400 uppercase tracking-wider">Account</th>
-                  <th className="px-3 py-3 text-right text-xs font-semibold text-gray-400 uppercase tracking-wider">Deposit (AED)</th>
-                  <th className="px-3 py-3 text-right text-xs font-semibold text-gray-400 uppercase tracking-wider">Co. Remaining After</th>
-                  <th className="w-20 px-4 py-3" />
-                </tr>
-              </thead>
-              <tbody>
-                {plan.map((a, i) => {
-                  const isAdded = added.has(i);
-                  const isSaving = saving.has(i);
-                  return (
-                    <tr key={i} className={cn('border-b border-gray-50 last:border-0 transition-colors', isAdded ? 'bg-emerald-50' : 'hover:bg-gray-50/50')}>
-                      <td className="px-5 py-3 text-xs text-gray-300 tabular-nums font-mono">{i + 1}</td>
-                      <td className="px-3 py-3"><CategoryBadge cat={a.category} /></td>
-                      <td className="px-3 py-3 text-gray-800 font-medium text-xs">{a.company_name}</td>
-                      <td className="px-3 py-3 text-gray-400 text-xs font-mono">{a.bank_account}</td>
-                      <td className="px-3 py-3 text-right text-xs font-bold text-gray-900 tabular-nums font-mono">{fmt(a.amount)}</td>
-                      <td className="px-3 py-3 text-right text-xs tabular-nums text-gray-400 font-mono">{fmt(a.remaining_after)}</td>
-                      <td className="px-3 py-3 text-right">
-                        {isAdded ? (
-                          <span className="flex items-center justify-end gap-1 text-xs text-emerald-600 font-semibold"><Check size={12} /> Added</span>
-                        ) : (
-                          <button onClick={() => addOne(i, a)} disabled={isSaving || addingAll}
-                            className="flex items-center gap-1 px-2.5 py-1 text-xs bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 ml-auto font-medium transition-colors">
-                            <Plus size={11} />{isSaving ? '…' : 'Add'}
-                          </button>
-                        )}
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-              <tfoot className="border-t border-gray-100 bg-gray-50/60">
-                <tr>
-                  <td colSpan={4} className="px-5 py-3 text-xs text-gray-400">
-                    {plan.length} deposit{plan.length !== 1 ? 's' : ''} across {uniqueCompanies} compan{uniqueCompanies !== 1 ? 'ies' : 'y'}
-                    {added.size > 0 && <span className="ml-2 text-emerald-600 font-medium">· {added.size} added</span>}
-                  </td>
-                  <td className="px-3 py-3 text-right text-sm font-bold text-blue-700 tabular-nums font-mono">{fmt(allocatedTotal)}</td>
-                  <td colSpan={2} />
-                </tr>
-              </tfoot>
-            </table>
+            <>
+              <table className="w-full text-sm">
+                <thead className="border-b border-gray-100 sticky top-0 bg-white">
+                  <tr>
+                    <th className="px-5 py-3 text-left text-xs font-semibold text-gray-400 uppercase tracking-wider w-8">#</th>
+                    <th className="px-3 py-3 text-left text-xs font-semibold text-gray-400 uppercase tracking-wider w-12">Cat</th>
+                    <th className="px-3 py-3 text-left text-xs font-semibold text-gray-400 uppercase tracking-wider">Company</th>
+                    <th className="px-3 py-3 text-left text-xs font-semibold text-gray-400 uppercase tracking-wider">Account</th>
+                    <th className="px-3 py-3 text-right text-xs font-semibold text-gray-400 uppercase tracking-wider">
+                      Deposit (AED) <span className="normal-case font-normal text-gray-300">· click to edit</span>
+                    </th>
+                    <th className="px-3 py-3 text-right text-xs font-semibold text-gray-400 uppercase tracking-wider">Co. Remaining After</th>
+                    <th className="w-20 px-4 py-3" />
+                  </tr>
+                </thead>
+                <tbody>
+                  {effectivePlan!.map((a, i) => {
+                    const isAdded = added.has(i);
+                    const isSaving = saving.has(i);
+                    const isEditing = editingIdx === i;
+                    const isModified = overrides[i] !== undefined;
+                    return (
+                      <tr key={i} className={cn('border-b border-gray-50 last:border-0 transition-colors', isAdded ? 'bg-emerald-50' : 'hover:bg-gray-50/50')}>
+                        <td className="px-5 py-3 text-xs text-gray-300 tabular-nums font-mono">{i + 1}</td>
+                        <td className="px-3 py-3"><CategoryBadge cat={a.category} /></td>
+                        <td className="px-3 py-3 text-gray-800 font-medium text-xs">{a.company_name}</td>
+                        <td className="px-3 py-3 text-gray-400 text-xs font-mono">{a.bank_account}</td>
+                        <td className="px-3 py-3 text-right">
+                          {isEditing ? (
+                            <input
+                              type="number"
+                              value={editingValue}
+                              onChange={(e) => setEditingValue(e.target.value)}
+                              onBlur={() => commitEdit(i)}
+                              onKeyDown={(e) => {
+                                if (e.key === 'Enter') { e.preventDefault(); commitEdit(i); }
+                                if (e.key === 'Escape') { setEditingIdx(null); setEditingValue(''); }
+                              }}
+                              autoFocus
+                              min={1}
+                              max={a.available_capacity}
+                              step={1}
+                              className="w-32 text-right border border-blue-300 rounded-lg px-2 py-1 text-xs font-mono bg-blue-50 focus:outline-none focus:ring-2 focus:ring-blue-500/30"
+                            />
+                          ) : (
+                            <button
+                              onClick={() => { if (!isAdded) { setEditingIdx(i); setEditingValue(String(a.amount)); } }}
+                              disabled={isAdded}
+                              title={isAdded ? undefined : `Click to edit · max ${fmt(a.available_capacity)}`}
+                              className={cn(
+                                'text-xs font-bold tabular-nums font-mono transition-colors inline-flex items-center gap-1',
+                                isAdded ? 'text-gray-400 cursor-default' : 'text-gray-900 hover:text-blue-600 cursor-pointer',
+                                isModified && !isAdded && 'text-blue-700',
+                              )}
+                            >
+                              {fmt(a.amount)}
+                              {isModified && !isAdded && <Pencil size={9} className="text-blue-400" />}
+                            </button>
+                          )}
+                        </td>
+                        <td className="px-3 py-3 text-right text-xs tabular-nums text-gray-400 font-mono">{fmt(a.remaining_after)}</td>
+                        <td className="px-3 py-3 text-right">
+                          {isAdded ? (
+                            <span className="flex items-center justify-end gap-1 text-xs text-emerald-600 font-semibold"><Check size={12} /> Added</span>
+                          ) : (
+                            <button onClick={() => addOne(i)} disabled={isSaving || addingAll}
+                              className="flex items-center gap-1 px-2.5 py-1 text-xs bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 ml-auto font-medium transition-colors">
+                              <Plus size={11} />{isSaving ? '…' : 'Add'}
+                            </button>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+                <tfoot className="border-t border-gray-100 bg-gray-50/60">
+                  <tr>
+                    <td colSpan={4} className="px-5 py-3 text-xs text-gray-400">
+                      {effectivePlan!.length} deposit{effectivePlan!.length !== 1 ? 's' : ''} across {uniqueCompanies} compan{uniqueCompanies !== 1 ? 'ies' : 'y'}
+                      {added.size > 0 && <span className="ml-2 text-emerald-600 font-medium">· {added.size} added</span>}
+                    </td>
+                    <td className="px-3 py-3 text-right text-sm font-bold text-blue-700 tabular-nums font-mono">{fmt(allocatedTotal)}</td>
+                    <td colSpan={2} />
+                  </tr>
+                </tfoot>
+              </table>
+
+              {/* Freed-amount suggestion panel — only shows companies NOT already in the plan */}
+              {unallocated > 0.01 && (
+                <div className="mx-5 my-3 rounded-xl border border-blue-100 bg-blue-50 p-4">
+                  <div className="flex items-center gap-2 mb-3">
+                    <div className="w-2 h-2 rounded-full bg-blue-500 flex-shrink-0" />
+                    <span className="text-xs font-semibold text-blue-800">
+                      AED <span className="font-mono">{fmt(unallocated)}</span> unallocated — suggested next company:
+                    </span>
+                  </div>
+                  {suggestion && !suggestionAdded ? (
+                    <div className="flex items-center justify-between gap-3 px-3 py-2 bg-white rounded-lg border border-blue-100">
+                      <div className="flex items-center gap-2 min-w-0">
+                        <CategoryBadge cat={suggestion.category} />
+                        <span className="text-xs font-medium text-gray-800 truncate">{suggestion.company_name}</span>
+                        <span className="text-[10px] text-gray-400 font-mono shrink-0">{suggestion.bank_account}</span>
+                      </div>
+                      <div className="flex items-center gap-2 shrink-0">
+                        <span className="text-xs text-gray-500 font-mono">
+                          +<strong className="text-gray-700">{fmt(suggestion.addable)}</strong>
+                        </span>
+                        <button
+                          onClick={addSuggestion}
+                          disabled={suggestionSaving}
+                          className="text-[10px] px-2.5 py-1 bg-blue-600 text-white rounded-lg font-semibold hover:bg-blue-700 disabled:opacity-50 transition-colors">
+                          {suggestionSaving ? '…' : '+ Add'}
+                        </button>
+                      </div>
+                    </div>
+                  ) : suggestionAdded ? (
+                    <div className="flex items-center gap-1.5 px-3 py-2 text-xs text-emerald-600 font-semibold bg-white rounded-lg border border-emerald-100">
+                      <Check size={12} /> Deposit added for {suggestion?.company_name}
+                    </div>
+                  ) : (
+                    <p className="text-xs text-blue-600">No other companies have remaining capacity this month</p>
+                  )}
+                </div>
+              )}
+            </>
           )}
           {leftover > 0.01 && (
             <div className="mx-5 my-3 flex items-center gap-2 px-4 py-3 bg-amber-50 border border-amber-100 rounded-xl text-xs text-amber-700">
@@ -657,11 +765,18 @@ function DepositPlannerModal({ groups, onClose, onDepositsAdded }: {
         </div>
         <div className="px-7 py-5 border-t border-gray-100 flex items-center justify-between">
           <div>
-            {plan && plan.length > 0 && !allAdded && (
-              <button onClick={addAll} disabled={addingAll}
-                className="px-4 py-2.5 text-sm bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 disabled:opacity-50 font-medium transition-colors">
-                {addingAll ? 'Adding…' : `Add All ${plan.length} Deposits`}
-              </button>
+            {effectivePlan && effectivePlan.length > 0 && !allAdded && (
+              <div className="flex flex-col gap-1">
+                <button onClick={addAll} disabled={addingAll}
+                  className="px-4 py-2.5 text-sm bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 disabled:opacity-50 font-medium transition-colors">
+                  {addingAll ? 'Adding…' : `Add All ${effectivePlan.length + (hasSuggestionPending ? 1 : 0)} Deposits`}
+                </button>
+                {hasSuggestionPending && (
+                  <p className="text-[10px] text-gray-400 text-center">
+                    incl. {fmt(suggestion!.addable)} → {suggestion!.company_name}
+                  </p>
+                )}
+              </div>
             )}
             {allAdded && (
               <span className="flex items-center gap-1.5 text-sm text-emerald-600 font-semibold"><Check size={14} /> All deposits added</span>
@@ -1028,9 +1143,12 @@ export default function CashDepositsTracker() {
               </button>
               {dateMode === 'custom' && (
                 <div className="flex items-center gap-2 ml-2 pl-2 border-l border-gray-100">
-                  <MonthPicker value={fromMonth} onChange={setFromMonth} />
+                  <MonthPicker
+                    value={fromMonth}
+                    onChange={v => { setFromMonth(v); if (toMonth && v > toMonth) setToMonth(v); }}
+                  />
                   <span className="text-gray-300 text-xs">→</span>
-                  <MonthPicker value={toMonth} onChange={setToMonth} />
+                  <MonthPicker value={toMonth} onChange={setToMonth} minMonth={fromMonth} />
                 </div>
               )}
             </div>

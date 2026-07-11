@@ -19,6 +19,7 @@ import { ImportLog } from '../entities/import-log.entity';
 import { diskStorage } from 'multer';
 import * as path from 'path';
 import * as fs from 'fs';
+import { extensionFilter, MB } from '../common/upload.util';
 
 @Module({
   imports: [
@@ -35,13 +36,19 @@ import * as fs from 'fs';
     forwardRef(() => ReconciliationModule),
     MulterModule.register({
       storage: diskStorage({
+        // tmp-imports is NOT served by the static /uploads route — imported
+        // financial files must never be publicly reachable
         destination: (req, file, cb) => {
-          const dir = path.join(process.cwd(), 'uploads');
+          const dir = path.join(process.cwd(), 'tmp-imports');
           if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
           cb(null, dir);
         },
-        filename: (req, file, cb) => cb(null, `${Date.now()}-${file.originalname}`),
+        // basename() strips any path segments smuggled into the client filename
+        filename: (req, file, cb) =>
+          cb(null, `${Date.now()}-${path.basename(file.originalname).replace(/[^\w.\- ]/g, '_')}`),
       }),
+      limits: { fileSize: 200 * MB },
+      fileFilter: extensionFilter(['.xlsx', '.xls']),
     }),
   ],
   controllers: [ImportController],

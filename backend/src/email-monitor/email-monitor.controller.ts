@@ -12,7 +12,8 @@ export class EmailMonitorController {
 
   @Get('config')
   getConfig() {
-    return this.service.getConfig();
+    // Sanitized: the stored app password is never returned to the browser
+    return this.service.getSafeConfig();
   }
 
   @Post('config')

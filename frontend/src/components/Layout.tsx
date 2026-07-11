@@ -4,7 +4,7 @@ import { useAuth } from '../auth/AuthContext';
 import { cn } from '../lib/utils';
 import {
   LayoutDashboard, Upload, FileText, ArrowLeftRight,
-  Flag, Users, LogOut, Landmark, ReceiptText, Building2, Settings, Coins, Briefcase, Banknote, ClipboardList, SlidersHorizontal,
+  Flag, Users, LogOut, Landmark, ReceiptText, Building2, Settings, Coins, Briefcase, Banknote, ClipboardList, SlidersHorizontal, TableProperties, HelpCircle, CalendarDays,
 } from 'lucide-react';
 
 export function Layout({ children }: { children: ReactNode }) {
@@ -12,7 +12,8 @@ export function Layout({ children }: { children: ReactNode }) {
   const navigate = useNavigate();
   const location = useLocation();
   const handleLogout = () => { logout(); navigate('/login'); };
-  const inBankStatements = location.pathname.startsWith('/bank-statements') || ['/company-view', '/settings', '/cash'].includes(location.pathname);
+  const inBankStatements = location.pathname.startsWith('/bank-statements') || ['/company-view', '/settings', '/cash', '/suspense'].includes(location.pathname);
+  const inTransactions = location.pathname === '/excel-balance' || location.pathname === '/transactions-suspense' || location.pathname === '/daily-transactions';
 
   const roleBadge: Record<string, string> = {
     super_admin: 'Super Admin', admin: 'Admin', developer: 'Developer', user: 'User',
@@ -43,18 +44,28 @@ export function Layout({ children }: { children: ReactNode }) {
           {/* Operational (admin, developer, super_admin) */}
           {canEdit && (
             <>
-              {[
-                // { to: '/import', label: 'Import', icon: Upload },
-                // { to: '/flags', label: 'Flags', icon: Flag },
-                { to: '/invoice-matching', label: 'Invoice Matching', icon: ReceiptText },
-              { to: '/app-settings', label: 'Settings', icon: SlidersHorizontal },
-              ].map(({ to, label, icon: Icon }) => (
-                <NavLink key={to} to={to}
+
+              <div>
+                <NavLink to="/excel-balance"
                   className={({ isActive }) => cn('flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition-colors',
-                    isActive ? 'bg-blue-600 text-white' : 'text-slate-300 hover:bg-slate-800 hover:text-white')}>
-                  <Icon size={16} />{label}
+                    (isActive || inTransactions) ? 'bg-blue-600 text-white' : 'text-slate-300 hover:bg-slate-800 hover:text-white')}>
+                  <TableProperties size={16} />Transactions
                 </NavLink>
-              ))}
+                {inTransactions && (
+                  <>
+                    <NavLink to="/daily-transactions"
+                      className={({ isActive }) => cn('flex items-center gap-2 ml-4 pl-5 pr-3 py-1.5 rounded-lg text-xs transition-colors border-l border-slate-700',
+                        isActive ? 'text-blue-400 bg-slate-800' : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800')}>
+                      <CalendarDays size={12} />Daily View
+                    </NavLink>
+                    <NavLink to="/transactions-suspense"
+                      className={({ isActive }) => cn('flex items-center gap-2 ml-4 pl-5 pr-3 py-1.5 rounded-lg text-xs transition-colors border-l border-slate-700',
+                        isActive ? 'text-blue-400 bg-slate-800' : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800')}>
+                      <HelpCircle size={12} />Suspense Review
+                    </NavLink>
+                  </>
+                )}
+              </div>
 
               <div>
                 <NavLink to="/bank-statements"
@@ -67,6 +78,7 @@ export function Layout({ children }: { children: ReactNode }) {
                     {[
                       { to: '/company-view', label: 'Company View', icon: Building2 },
                       { to: '/cash', label: 'Cash Ledger', icon: Coins },
+                      { to: '/suspense', label: 'Suspense Review', icon: HelpCircle },
                       { to: '/settings', label: 'Email Import', icon: Settings },
                     ].map(({ to, label, icon: Icon }) => (
                       <NavLink key={to} to={to}
@@ -90,7 +102,6 @@ export function Layout({ children }: { children: ReactNode }) {
             </NavLink>
           )}
 
-          {/* Super admin only */}
           {user?.role === 'super_admin' && (
             <NavLink to="/audit-logs"
               className={({ isActive }) => cn('flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition-colors',
@@ -101,6 +112,13 @@ export function Layout({ children }: { children: ReactNode }) {
         </nav>
 
         <div className="px-3 py-4 border-t border-slate-700">
+          {canEdit && (
+            <NavLink to="/app-settings"
+              className={({ isActive }) => cn('flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition-colors mb-1',
+                isActive ? 'bg-blue-600 text-white' : 'text-slate-300 hover:bg-slate-800 hover:text-white')}>
+              <SlidersHorizontal size={16} />Settings
+            </NavLink>
+          )}
           <div className="flex items-center gap-2 px-2 py-1.5 mb-1">
             <div className="w-7 h-7 rounded-full bg-blue-600 flex items-center justify-center text-white text-xs font-semibold">
               {user?.email?.[0]?.toUpperCase()}
@@ -113,7 +131,7 @@ export function Layout({ children }: { children: ReactNode }) {
           <button onClick={handleLogout} className="flex items-center gap-2 w-full px-2 py-1.5 text-slate-400 hover:text-white text-xs rounded-lg hover:bg-slate-800 transition-colors">
             <LogOut size={13} />Sign out
           </button>
-          <p className="text-slate-600 text-xs text-center mt-2">v1.4 (WORK IN PROGRESS)</p>
+          <p className="text-slate-600 text-xs text-center mt-2">v1.5 (WORK IN PROGRESS)</p>
         </div>
       </aside>
 

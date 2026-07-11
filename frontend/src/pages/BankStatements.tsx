@@ -1,5 +1,5 @@
 import { useEffect, useState, useRef, useMemo } from 'react';
-import { useNavigate, useSearchParams } from 'react-router-dom';
+import { useNavigate } from 'react-router-dom';
 import { Layout, PageHeader } from '../components/Layout';
 import { Card, CardHeader, CardBody } from '../components/ui/card';
 import { Button } from '../components/ui/button';
@@ -11,23 +11,24 @@ import {
   deleteAllBankStatements,
 } from '../api';
 import { fmtDate } from '../utils/format';
-import { Upload, Plus, Pencil, Trash2, X, Check, FileText, Lock, Unlock, Eye, EyeOff } from 'lucide-react';
+import { Upload, Plus, Pencil, Trash2, X, Check, FileText, Lock, Unlock, Eye, EyeOff, Calendar } from 'lucide-react';
+import { MonthPicker, currentMonthStr } from '../components/MonthPicker';
+import { FilterSelect } from '../components/FilterSelect';
 
 const CURRENCIES = ['AED', 'USD', 'EUR'];
 const emptyForm = { account_number: '', company_name: '', currency: 'AED', bank_name: '' };
 
 export default function BankStatements() {
   const navigate = useNavigate();
-  const [searchParams, setSearchParams] = useSearchParams();
   const { canEdit } = useAuth();
   const canWrite = canEdit;
 
-  const startDate = searchParams.get('startDate') ?? '';
-  const endDate = searchParams.get('endDate') ?? '';
+  const [fromMonth, setFromMonth] = useState('');
+  const [toMonth,   setToMonth]   = useState('');
 
-  const setStartDate = (v: string) => setSearchParams(p => { const n = new URLSearchParams(p); v ? n.set('startDate', v) : n.delete('startDate'); return n; }, { replace: true });
-  const setEndDate   = (v: string) => setSearchParams(p => { const n = new URLSearchParams(p); v ? n.set('endDate', v)   : n.delete('endDate');   return n; }, { replace: true });
-  const clearDates   = () => setSearchParams(p => { const n = new URLSearchParams(p); n.delete('startDate'); n.delete('endDate'); return n; }, { replace: true });
+  // Derive full ISO dates for API calls and navigation
+  const startDate = fromMonth ? fromMonth + '-01' : '';
+  const endDate   = toMonth ? (() => { const [y, m] = toMonth.split('-').map(Number); return `${toMonth}-${String(new Date(y, m, 0).getDate()).padStart(2, '0')}`; })() : '';
 
   const [accounts, setAccounts] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
@@ -202,7 +203,8 @@ export default function BankStatements() {
   // Per-account PDF password
   const openPwdEdit = (a: any) => {
     setPwdEditId(a.id);
-    setPwdValue(a.pdf_password ?? '');
+    // Stored password is never sent to the browser — field starts empty
+    setPwdValue('');
     setPwdShow(false);
     setPwdError('');
   };
@@ -212,7 +214,7 @@ export default function BankStatements() {
     setPwdSaving(true); setPwdError('');
     try {
       const updated = await setCsvAccountPdfPassword(pwdEditId, pwdValue);
-      setAccounts(prev => prev.map(a => a.id === pwdEditId ? { ...a, pdf_password: (updated.data as any).pdf_password } : a));
+      setAccounts(prev => prev.map(a => a.id === pwdEditId ? { ...a, has_pdf_password: (updated.data as any).has_pdf_password } : a));
       setPwdEditId(null);
     } catch (e: any) {
       setPwdError(e?.response?.data?.message ?? 'Failed to save password');
@@ -408,15 +410,36 @@ export default function BankStatements() {
         {/* Date filter bar */}
         <div className="flex items-center gap-3 bg-white border border-gray-200 rounded-xl px-5 py-3">
           <span className="text-xs font-medium text-gray-500">Date range</span>
-          <input type="date" value={startDate} onChange={e => setStartDate(e.target.value)}
-            className="border border-gray-200 rounded-lg px-2 py-1 text-xs text-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-500" />
-          <span className="text-xs text-gray-400">to</span>
-          <input type="date" value={endDate} onChange={e => setEndDate(e.target.value)}
-            className="border border-gray-200 rounded-lg px-2 py-1 text-xs text-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-500" />
-          {(startDate || endDate) && (
-            <button onClick={clearDates} className="text-xs text-gray-400 hover:text-gray-600 underline ml-1">Clear</button>
+          {fromMonth ? (
+            <div className="flex items-center gap-1.5 border border-gray-200 rounded-lg px-2 py-1 bg-white">
+              <Calendar size={12} className="text-gray-400 shrink-0" />
+              <MonthPicker
+                value={fromMonth}
+                onChange={v => { setFromMonth(v); if (toMonth && v > toMonth) setToMonth(v); }}
+              />
+              <span className="text-gray-300 text-xs">→</span>
+              <MonthPicker value={toMonth} onChange={setToMonth} minMonth={fromMonth} />
+              <button onClick={() => { setFromMonth(''); setToMonth(''); }} className="ml-1 text-gray-400 hover:text-gray-600">
+                <X size={12} />
+              </button>
+            </div>
+          ) : (
+            <button
+              onClick={() => { const m = currentMonthStr(); setFromMonth(m); setToMonth(m); }}
+              className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs text-gray-500 border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors"
+            >
+              <Calendar size={12} /> Month
+            </button>
           )}
-          {(startDate || endDate) && (
+          {fromMonth && (
+            <button
+              onClick={() => { const m = currentMonthStr(); setFromMonth(m); setToMonth(m); }}
+              className="text-xs text-gray-400 hover:text-gray-600 border border-gray-200 rounded-lg px-2.5 py-1.5 hover:bg-gray-50 transition-colors"
+            >
+              Default
+            </button>
+          )}
+          {(fromMonth || toMonth) && (
             <span className="ml-auto text-xs text-blue-600 bg-blue-50 px-2 py-0.5 rounded-full border border-blue-200">
               Filter active — applies when viewing account transactions
             </span>
@@ -441,21 +464,12 @@ export default function BankStatements() {
                 )}
               </p>
               <div className="flex items-center gap-2 flex-wrap">
-                <select value={filterCompany} onChange={e => setFilterCompany(e.target.value)}
-                  className="border border-gray-200 rounded-lg px-2 py-1 text-xs text-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-500">
-                  <option value="">All companies</option>
-                  {uniqueCompanies.map(c => <option key={c} value={c}>{c}</option>)}
-                </select>
-                <select value={filterBank} onChange={e => setFilterBank(e.target.value)}
-                  className="border border-gray-200 rounded-lg px-2 py-1 text-xs text-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-500">
-                  <option value="">All banks</option>
-                  {uniqueBanks.map(b => <option key={b} value={b}>{b}</option>)}
-                </select>
-                <select value={filterCurrency} onChange={e => setFilterCurrency(e.target.value)}
-                  className="border border-gray-200 rounded-lg px-2 py-1 text-xs text-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-500">
-                  <option value="">All currencies</option>
-                  {uniqueCurrencies.map(c => <option key={c} value={c}>{c}</option>)}
-                </select>
+                <FilterSelect value={filterCompany} onChange={setFilterCompany} placeholder="All companies"
+                  options={uniqueCompanies.map(c => ({ label: c, value: c }))} />
+                <FilterSelect value={filterBank} onChange={setFilterBank} placeholder="All banks"
+                  options={uniqueBanks.map(b => ({ label: b, value: b }))} />
+                <FilterSelect value={filterCurrency} onChange={setFilterCurrency} placeholder="All currencies"
+                  options={uniqueCurrencies.map(c => ({ label: c, value: c }))} />
                 {hasFilters && (
                   <button onClick={() => { setFilterCompany(''); setFilterBank(''); setFilterCurrency(''); }}
                     className="text-xs text-gray-400 hover:text-gray-600 underline">Clear</button>
@@ -582,10 +596,10 @@ export default function BankStatements() {
                         <div className="flex items-center gap-1">
                           <button
                             onClick={() => openPwdEdit(a)}
-                            title={a.pdf_password ? 'PDF password set — click to change' : 'Set PDF password'}
-                            className={`p-1.5 rounded hover:bg-gray-100 transition-colors ${a.pdf_password ? 'text-amber-500 hover:text-amber-600' : 'text-gray-300 hover:text-gray-500'}`}
+                            title={a.has_pdf_password ? 'PDF password set — click to change' : 'Set PDF password'}
+                            className={`p-1.5 rounded hover:bg-gray-100 transition-colors ${a.has_pdf_password ? 'text-amber-500 hover:text-amber-600' : 'text-gray-300 hover:text-gray-500'}`}
                           >
-                            {a.pdf_password ? <Lock size={13} /> : <Unlock size={13} />}
+                            {a.has_pdf_password ? <Lock size={13} /> : <Unlock size={13} />}
                           </button>
                           <button onClick={() => openEdit(a)} className="p-1.5 rounded hover:bg-gray-100 text-gray-400 hover:text-gray-700">
                             <Pencil size={13} />

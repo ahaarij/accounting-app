@@ -6,15 +6,19 @@ import { User } from '../entities/user.entity';
 import { AuthService } from './auth.service';
 import { AuthController } from './auth.controller';
 import { JwtStrategy } from './jwt.strategy';
+import { AuditModule } from '../audit/audit.module';
+import { MailModule } from '../mail/mail.module';
 
 @Module({
   imports: [
     TypeOrmModule.forFeature([User]),
+    AuditModule,
     PassportModule,
     JwtModule.register({
       secret: process.env.JWT_SECRET,
       signOptions: { expiresIn: '8h' },
     }),
+    MailModule,
   ],
   providers: [AuthService, JwtStrategy],
   controllers: [AuthController],

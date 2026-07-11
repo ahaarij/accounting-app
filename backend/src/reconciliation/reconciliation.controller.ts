@@ -43,7 +43,7 @@ export class ReconciliationController {
   }
 
   @Delete('clear-all')
-  @Roles('super_admin', 'admin', 'developer')
+  @Roles('super_admin', 'admin')
   async clearAll() {
     return this.reconciliationService.clearAll();
   }

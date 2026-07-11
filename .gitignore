@@ -8,3 +8,17 @@ STATUS.md
 Specs.md
 HANDOFF.md
 CLAUDE.md
+SERVER-SETUP.md
+
+# Build artifacts
+backend/tsconfig.tsbuildinfo
+frontend/tsconfig.tsbuildinfo
+
+# Never commit client financial files or local artifacts
+/*.xlsx
+/*.xls
+/*.csv
+/*.pdf
+backups/
+backend/tmp-imports/
+backend/uploads/

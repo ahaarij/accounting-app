@@ -9,14 +9,19 @@ import { CompaniesService } from './companies.service';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { RolesGuard } from '../auth/roles.guard';
 import { Roles } from '../auth/roles.decorator';
+import { extensionFilter, MB } from '../common/upload.util';
 
 const logoStorage = diskStorage({
   destination: join(__dirname, '..', '..', '..', 'uploads', 'logos'),
   filename: (_req, file, cb) => {
     const unique = Date.now() + '-' + Math.round(Math.random() * 1e9);
-    cb(null, unique + extname(file.originalname));
+    cb(null, unique + extname(file.originalname).toLowerCase());
   },
 });
+
+// Logos are served unauthenticated from /uploads — images only, so nobody can
+// park an HTML/SVG page (stored XSS) or arbitrary files on the public route
+const LOGO_EXTENSIONS = ['.png', '.jpg', '.jpeg', '.webp', '.gif'];
 
 @UseGuards(JwtAuthGuard)
 @Controller('company-profiles')
@@ -55,7 +60,11 @@ export class CompaniesController {
   @Post(':id/logo')
   @UseGuards(RolesGuard)
   @Roles('super_admin', 'admin', 'developer')
-  @UseInterceptors(FileInterceptor('logo', { storage: logoStorage }))
+  @UseInterceptors(FileInterceptor('logo', {
+    storage: logoStorage,
+    limits: { fileSize: 5 * MB },
+    fileFilter: extensionFilter(LOGO_EXTENSIONS),
+  }))
   uploadLogo(
     @Param('id', ParseIntPipe) id: number,
     @UploadedFile() file: Express.Multer.File,

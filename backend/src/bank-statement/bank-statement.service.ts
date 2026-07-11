@@ -3,7 +3,10 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, IsNull } from 'typeorm';
 import { CsvAccount } from '../entities/csv-account.entity';
 import { CsvTransaction } from '../entities/csv-transaction.entity';
+import { SuspenseRule } from '../entities/suspense-rule.entity';
 import { toNumber } from '../import/utils/date.util';
+import { encryptSecret } from '../common/crypto.util';
+import { escapeLike } from '../common/sql.util';
 import { PDFParse } from 'pdf-parse';
 import { detectBank } from './parsers/bank-detector';
 import { parseADIB } from './parsers/adib.parser';
@@ -18,18 +21,31 @@ import { parseUBL } from './parsers/ubl.parser';
 import { parseADCB } from './parsers/adcb.parser';
 import { parseRAKBANK } from './parsers/rakbank.parser';
 import { ParsedStatement } from './parsers/types';
+import { normalizeDescription } from '../common/text.util';
+
+// SQL twin of normalizeDescription() — must stay in sync
+const SQL_NORM = (col: string) =>
+  `UPPER(BTRIM(regexp_replace(COALESCE(${col}, ''), '\\s+', ' ', 'g')))`;
+
+export type SuspenseSource = 'statement' | 'excel';
 
 @Injectable()
 export class BankStatementService {
   constructor(
     @InjectRepository(CsvAccount) private readonly accountRepo: Repository<CsvAccount>,
     @InjectRepository(CsvTransaction) private readonly txRepo: Repository<CsvTransaction>,
+    @InjectRepository(SuspenseRule) private readonly ruleRepo: Repository<SuspenseRule>,
   ) {}
 
   // ── Account registry ──────────────────────────────────────────────────────
 
-  async getAccounts(): Promise<CsvAccount[]> {
-    return this.accountRepo.find({ order: { company_name: 'ASC' } });
+  async getAccounts(): Promise<Array<CsvAccount & { has_pdf_password: boolean }>> {
+    const accounts = await this.accountRepo.find({ order: { company_name: 'ASC' } });
+    const flags: Array<{ id: number; has: boolean }> = await this.accountRepo.query(
+      `SELECT id, (pdf_password IS NOT NULL) AS has FROM csv_accounts`,
+    );
+    const map = new Map(flags.map((f) => [f.id, f.has]));
+    return accounts.map((a) => ({ ...a, has_pdf_password: map.get(a.id) ?? false }));
   }
 
   async createAccount(dto: {
@@ -147,11 +163,13 @@ export class BankStatementService {
 
   // ── PDF password management ───────────────────────────────────────────────
 
-  async setPdfPassword(id: number, password: string): Promise<CsvAccount> {
+  async setPdfPassword(id: number, password: string): Promise<CsvAccount & { has_pdf_password: boolean }> {
     const account = await this.accountRepo.findOne({ where: { id } });
     if (!account) throw new NotFoundException(`Account #${id} not found`);
-    account.pdf_password = password || null;
-    return this.accountRepo.save(account);
+    account.pdf_password = password ? encryptSecret(password) : null;
+    const saved = await this.accountRepo.save(account);
+    const { pdf_password, ...safe } = saved;
+    return { ...safe, has_pdf_password: !!password } as CsvAccount & { has_pdf_password: boolean };
   }
 
   // ── PDF preview (text extraction only, no DB write) ──────────────────────
@@ -262,6 +280,16 @@ export class BankStatementService {
 
     const results: Array<{ account_number: string; company_name: string; imported: number; skipped: number; created: boolean }> = [];
 
+    // Remembered classifications: auto-classify transactions that would otherwise
+    // land in suspense when their description matches a saved rule
+    const rules = await this.ruleRepo.find();
+    const ruleMap = new Map(rules.map((r) => [r.match_text, r]));
+    const applyRule = (narration: string, type: string): { type: string; label?: string } => {
+      if (type !== 'SUSPENSE') return { type };
+      const rule = ruleMap.get(normalizeDescription(narration));
+      return rule ? { type: rule.transaction_type, label: rule.label ?? undefined } : { type };
+    };
+
     for (const parsedAccount of statement.accounts) {
       // Find or create the csv_account
       let csvAccount = parsedAccount.iban
@@ -320,13 +348,15 @@ export class BankStatementService {
           continue;
         }
 
+        const classified = applyRule(tx.narration, tx.transaction_type);
         const saved = await this.txRepo.save(this.txRepo.create({
           csv_account_id: csvAccount.id,
           date: tx.date,
           value_date: tx.value_date ?? undefined,
           description: tx.narration,
           counterparty: tx.counterparty ?? undefined,
-          transaction_type: tx.transaction_type,
+          transaction_type: classified.type,
+          custom_label: classified.label,
           ref: tx.reference ?? undefined,
           debit: tx.debit ?? undefined,
           credit: tx.credit ?? undefined,
@@ -356,13 +386,15 @@ export class BankStatementService {
         });
         if (exists) { skipped++; continue; }
 
+        const chargeClassified = applyRule(tx.narration, tx.transaction_type);
         await this.txRepo.save(this.txRepo.create({
           csv_account_id: csvAccount.id,
           date: tx.date,
           value_date: tx.value_date ?? undefined,
           description: tx.narration,
           counterparty: tx.counterparty ?? undefined,
-          transaction_type: tx.transaction_type,
+          transaction_type: chargeClassified.type,
+          custom_label: chargeClassified.label,
           ref: tx.reference ?? undefined,
           debit: tx.debit ?? undefined,
           credit: tx.credit ?? undefined,
@@ -462,7 +494,7 @@ export class BankStatementService {
       .groupBy('a.id')
       .getRawMany();
 
-    const accounts = await this.accountRepo.find({ order: { company_name: 'ASC' } });
+    const accounts = await this.getAccounts();
     const statsMap = new Map(rows.map((r: any) => [r.id, r]));
 
     return accounts.map(a => {
@@ -507,7 +539,7 @@ export class BankStatementService {
         'a.currency     AS currency',
         'a.bank_name    AS bank_name',
       ])
-      .where('a.company_name ILIKE :pattern', { pattern: `%${search}%` })
+      .where('a.company_name ILIKE :pattern', { pattern: `%${escapeLike(search)}%` })
       .orderBy('t.date', 'DESC')
       .addOrderBy('t.id', 'ASC');
 
@@ -753,6 +785,77 @@ export class BankStatementService {
       });
     }
     return transactions;
+  }
+
+  // ── Suspense review ─────────────────────────────────────────────────────────
+
+  // Suspense entries from bank statement imports (PDF/CSV) only
+  async getSuspenseTransactions(): Promise<any[]> {
+    return this.txRepo.query(`
+      SELECT t.id, 'statement' AS source, t.date::text AS date, t.description, t.ref,
+             t.debit, t.credit, t.bank_detected,
+             a.company_name, a.bank_name, a.currency
+      FROM csv_transactions t
+      JOIN csv_accounts a ON a.id = t.csv_account_id
+      WHERE t.transaction_type = 'SUSPENSE'
+      ORDER BY date DESC NULLS LAST, id DESC
+    `);
+  }
+
+  async classifySuspense(
+    source: SuspenseSource,
+    id: number,
+    dto: { transaction_type: string; label?: string; apply_to_similar?: boolean },
+  ): Promise<{ updated: number; rule_saved: boolean }> {
+    if (!dto.transaction_type) throw new BadRequestException('transaction_type is required');
+    const label = dto.label?.trim() || null;
+
+    // Update the clicked transaction in whichever table it lives in
+    const table = source === 'excel' ? 'excel_transactions' : 'csv_transactions';
+    const descCol = source === 'excel' ? 'particular' : 'description';
+    const res = await this.txRepo.query(
+      `UPDATE ${table} SET transaction_type = $1, custom_label = $2 WHERE id = $3 RETURNING ${descCol} AS description`,
+      [dto.transaction_type, label, id],
+    );
+    if (!res[0]?.length) throw new NotFoundException(`Transaction #${id} not found`);
+    let updated = 1;
+    let ruleSaved = false;
+
+    const matchText = normalizeDescription(res[0][0].description);
+    if (dto.apply_to_similar && matchText) {
+      // Reclassify every other suspense entry with the same description — in
+      // BOTH tables, since the Excel sheets and the statements describe the
+      // same underlying bank activity
+      const [, stmtCount] = await this.txRepo.query(
+        `UPDATE csv_transactions SET transaction_type = $1, custom_label = $2
+         WHERE transaction_type = 'SUSPENSE' AND ${SQL_NORM('description')} = $3`,
+        [dto.transaction_type, label, matchText],
+      );
+      const [, excelCount] = await this.txRepo.query(
+        `UPDATE excel_transactions SET transaction_type = $1, custom_label = $2
+         WHERE transaction_type = 'SUSPENSE' AND ${SQL_NORM('particular')} = $3`,
+        [dto.transaction_type, label, matchText],
+      );
+      updated += (stmtCount ?? 0) + (excelCount ?? 0);
+
+      // Remember for future imports (applied by both import pipelines)
+      await this.ruleRepo.upsert(
+        { match_text: matchText, label, transaction_type: dto.transaction_type },
+        ['match_text'],
+      );
+      ruleSaved = true;
+    }
+
+    return { updated, rule_saved: ruleSaved };
+  }
+
+  async getSuspenseRules(): Promise<SuspenseRule[]> {
+    return this.ruleRepo.find({ order: { created_at: 'DESC' } });
+  }
+
+  async deleteSuspenseRule(id: number): Promise<{ deleted: boolean }> {
+    await this.ruleRepo.delete(id);
+    return { deleted: true };
   }
 
   // ── Utilities ─────────────────────────────────────────────────────────────

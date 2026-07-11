@@ -28,6 +28,10 @@ export class CsvTransaction {
   @Column({ type: 'varchar', length: 100, nullable: true })
   transaction_type: string;
 
+  // User-assigned friendly name (set via suspense review)
+  @Column({ type: 'varchar', length: 255, nullable: true })
+  custom_label: string;
+
   @Column({ type: 'varchar', length: 255, nullable: true })
   ref: string;
 

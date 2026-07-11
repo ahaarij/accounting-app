@@ -1,6 +1,8 @@
 import { useEffect, useState, useRef } from 'react';
 import { Layout, PageHeader } from '../components/Layout';
-import { Plus, X, Landmark, Tag, Check, GripVertical } from 'lucide-react';
+import { Plus, X, Landmark, Tag, Check, GripVertical, Mail, Send } from 'lucide-react';
+import { useAuth } from '../auth/AuthContext';
+import { getAppSettings, saveAppSettings, sendTestEmail } from '../api';
 
 function loadList(key: string, defaults: string[]): string[] {
   try {
@@ -142,7 +144,140 @@ function ListEditor({ label, description, icon: Icon, iconBg, iconColor, items, 
   );
 }
 
+interface SmtpField { key: string; label: string; type?: string; placeholder: string; hint?: string }
+const SMTP_FIELDS: SmtpField[] = [
+  { key: 'smtp_host',       label: 'SMTP Host',      placeholder: 'smtp.gmail.com' },
+  { key: 'smtp_port',       label: 'SMTP Port',      placeholder: '587',           hint: '587 = TLS (recommended), 465 = SSL' },
+  { key: 'smtp_user',       label: 'Username',       placeholder: 'you@gmail.com' },
+  { key: 'smtp_pass',       label: 'Password',       type: 'password', placeholder: '(unchanged)' },
+  { key: 'smtp_from_name',  label: 'From Name',      placeholder: 'Reconciliation App' },
+  { key: 'smtp_from_email', label: 'From Email',     placeholder: 'noreply@yourcompany.ae', hint: 'Leave blank to use username' },
+];
+
+function SmtpSettings() {
+  const [values, setValues] = useState<Record<string, string>>({});
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [saved, setSaved] = useState(false);
+  const [testing, setTesting] = useState(false);
+  const [testMsg, setTestMsg] = useState('');
+  const [testErr, setTestErr] = useState('');
+
+  useEffect(() => {
+    getAppSettings()
+      .then(res => {
+        const init: Record<string, string> = {};
+        for (const f of SMTP_FIELDS) init[f.key] = res.data[f.key] ?? '';
+        setValues(init);
+      })
+      .catch(() => {})
+      .finally(() => setLoading(false));
+  }, []);
+
+  const handleSave = async () => {
+    setSaving(true); setSaved(false);
+    try {
+      // Send the password only if the user typed something (non-empty, not the placeholder sentinel)
+      const payload: Record<string, string> = {};
+      for (const f of SMTP_FIELDS) {
+        if (f.key === 'smtp_pass' && !values['smtp_pass']) continue; // keep existing pass
+        payload[f.key] = values[f.key] ?? '';
+      }
+      await saveAppSettings(payload);
+      setSaved(true);
+      setTimeout(() => setSaved(false), 2500);
+    } catch {
+      /* ignore, could add toast */
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleTest = async () => {
+    setTesting(true); setTestMsg(''); setTestErr('');
+    try {
+      const res = await sendTestEmail();
+      setTestMsg(res.data.message);
+    } catch (e: any) {
+      setTestErr(e?.response?.data?.message ?? 'Test failed — check SMTP settings.');
+    } finally {
+      setTesting(false);
+    }
+  };
+
+  if (loading) return (
+    <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-6 text-sm text-gray-400">Loading SMTP settings…</div>
+  );
+
+  return (
+    <div className="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden">
+      <div className="px-6 py-5 border-b border-gray-100 flex items-start justify-between gap-4">
+        <div className="flex items-center gap-4">
+          <div className="w-10 h-10 rounded-xl bg-sky-50 flex items-center justify-center flex-shrink-0">
+            <Mail size={18} className="text-sky-600" />
+          </div>
+          <div>
+            <h2 className="text-sm font-semibold text-gray-900">Email (SMTP)</h2>
+            <p className="text-xs text-gray-400 mt-0.5">Used for password reset emails</p>
+          </div>
+        </div>
+        <div className="flex items-center gap-2 flex-shrink-0">
+          <button
+            onClick={handleTest}
+            disabled={testing}
+            className="flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-50 disabled:opacity-50 transition-colors"
+          >
+            <Send size={12} />{testing ? 'Sending…' : 'Test email'}
+          </button>
+          <button
+            onClick={handleSave}
+            disabled={saving}
+            className={`flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-lg transition-all duration-200 ${
+              saved ? 'bg-green-50 text-green-700 border border-green-200' : 'bg-blue-600 hover:bg-blue-700 text-white'
+            } disabled:opacity-60`}
+          >
+            {saved ? <><Check size={12} /> Saved</> : saving ? 'Saving…' : 'Save'}
+          </button>
+        </div>
+      </div>
+
+      <div className="px-6 py-4 space-y-3">
+        {testMsg && <div className="text-xs text-green-700 bg-green-50 border border-green-200 rounded-lg px-3 py-2">{testMsg}</div>}
+        {testErr && <div className="text-xs text-red-700 bg-red-50 border border-red-200 rounded-lg px-3 py-2">{testErr}</div>}
+
+        <div className="grid grid-cols-2 gap-3">
+          {SMTP_FIELDS.map(f => (
+            <div key={f.key} className={f.key === 'smtp_host' ? 'col-span-2' : ''}>
+              <label className="block text-xs font-medium text-gray-600 mb-1">{f.label}</label>
+              <input
+                type={f.type ?? 'text'}
+                value={values[f.key] ?? ''}
+                onChange={e => setValues(v => ({ ...v, [f.key]: e.target.value }))}
+                placeholder={f.key === 'smtp_pass' && values['smtp_pass'] === '' ? '(unchanged — leave blank to keep)' : f.placeholder}
+                className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-gray-50 focus:bg-white transition-colors"
+              />
+              {f.hint && <p className="text-xs text-gray-400 mt-0.5">{f.hint}</p>}
+            </div>
+          ))}
+        </div>
+
+        <div className="flex items-center gap-2 pt-1">
+          <input
+            type="checkbox"
+            id="smtp_secure"
+            checked={values['smtp_secure'] === 'true'}
+            onChange={e => setValues(v => ({ ...v, smtp_secure: e.target.checked ? 'true' : 'false' }))}
+            className="rounded border-gray-300"
+          />
+          <label htmlFor="smtp_secure" className="text-xs text-gray-600">Use SSL (port 465) — leave unchecked for STARTTLS on port 587</label>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function AppSettings() {
+  const { user } = useAuth();
   const [bankNames, setBankNames] = useState<string[]>([]);
   const [categories, setCategories] = useState<string[]>([]);
 
@@ -162,7 +297,14 @@ export default function AppSettings() {
           {/* Section label */}
           <div>
             <p className="text-xs font-semibold text-gray-400 uppercase tracking-widest mb-4">Reference Lists</p>
-            <div className="space-y-5">
+            {user?.role === 'super_admin' && (
+            <div className="mb-5">
+              <p className="text-xs font-semibold text-gray-400 uppercase tracking-widest mb-4">Email Configuration</p>
+              <SmtpSettings />
+            </div>
+          )}
+
+          <div className="space-y-5">
               <ListEditor
                 label="Bank Names"
                 description="Used when assigning bank accounts to companies"

@@ -22,6 +22,11 @@ import CompanyProfileDetail from './pages/CompanyProfileDetail';
 import CashDepositsTracker from './pages/CashDepositsTracker';
 import AuditLogs from './pages/AuditLogs';
 import AppSettings from './pages/AppSettings';
+import ExcelBalance from './pages/ExcelBalance';
+import SuspenseReview from './pages/SuspenseReview';
+import DailyTransactions from './pages/DailyTransactions';
+import ForgotPassword from './pages/ForgotPassword';
+import ResetPassword from './pages/ResetPassword';
 
 // Roles allowed to access operational pages (not plain users)
 const OPS = ['super_admin', 'admin', 'developer'] as const;
@@ -36,6 +41,8 @@ export default function App() {
           {/* Public */}
           <Route path="/login" element={<Login />} />
           <Route path="/register" element={<Register />} />
+          <Route path="/forgot-password" element={<ForgotPassword />} />
+          <Route path="/reset-password" element={<ResetPassword />} />
 
           {/* All authenticated roles */}
           <Route path="/" element={<PrivateRoute><Dashboard /></PrivateRoute>} />
@@ -57,6 +64,10 @@ export default function App() {
           <Route path="/cash" element={<PrivateRoute roles={[...OPS]}><CashLedger /></PrivateRoute>} />
           <Route path="/settings" element={<PrivateRoute roles={[...OPS]}><Settings /></PrivateRoute>} />
           <Route path="/app-settings" element={<PrivateRoute roles={[...OPS]}><AppSettings /></PrivateRoute>} />
+          <Route path="/excel-balance" element={<PrivateRoute roles={[...OPS]}><ExcelBalance /></PrivateRoute>} />
+          <Route path="/suspense" element={<PrivateRoute roles={[...OPS]}><SuspenseReview /></PrivateRoute>} />
+          <Route path="/transactions-suspense" element={<PrivateRoute roles={[...OPS]}><SuspenseReview /></PrivateRoute>} />
+          <Route path="/daily-transactions" element={<PrivateRoute roles={[...OPS]}><DailyTransactions /></PrivateRoute>} />
 
           {/* Management — super_admin, admin only */}
           <Route path="/users" element={<PrivateRoute roles={[...MGMT]}><UserManagement /></PrivateRoute>} />

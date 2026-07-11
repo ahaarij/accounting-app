@@ -233,7 +233,7 @@ function parseENBDNarration(narration: string): ParsedNarration {
     return { transaction_type: 'BANK_CHARGE', counterparty: null, is_charge: true, description: 'Bank charge', fx_rate: null, fx_original_amount: null, fx_original_currency: null };
   }
 
-  return { transaction_type: 'OTHER', counterparty: null, is_charge: false, description: null, fx_rate: null, fx_original_amount: null, fx_original_currency: null };
+  return { transaction_type: 'SUSPENSE', counterparty: null, is_charge: false, description: null, fx_rate: null, fx_original_amount: null, fx_original_currency: null };
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────────

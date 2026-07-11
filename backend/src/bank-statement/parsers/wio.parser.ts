@@ -242,5 +242,5 @@ function classifyWio(description: string, amount: number, ref: string, prevRef: 
     return { transaction_type: 'INWARD_TRANSFER', counterparty: cleanText(inMatch[1]), is_charge: false, charge_ref: ref, fx_rate: null, fx_original_amount: null, fx_original_currency: null };
   }
 
-  return { transaction_type: 'OTHER', counterparty: null, is_charge: false, charge_ref: ref, fx_rate: null, fx_original_amount: null, fx_original_currency: null };
+  return { transaction_type: 'SUSPENSE', counterparty: null, is_charge: false, charge_ref: ref, fx_rate: null, fx_original_amount: null, fx_original_currency: null };
 }
