@@ -68,6 +68,9 @@ importers:
       helmet:
         specifier: ^8.2.0
         version: 8.2.0
+      express:
+        specifier: ^4.22.1
+        version: 4.22.1
       imapflow:
         specifier: ^1.4.6
         version: 1.4.6

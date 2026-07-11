@@ -5,6 +5,7 @@ WORKDIR /app
 
 # Copy workspace config so pnpm knows the monorepo layout
 COPY pnpm-workspace.yaml package.json pnpm-lock.yaml ./
+COPY .npmrc ./
 COPY backend/package.json ./backend/
 
 # Install backend dependencies only
